@@ -28,7 +28,12 @@ func TestIntegration(t *testing.T) {
 	sockPath := filepath.Join(home, ".persishtent", sessionName+".sock")
 	logPath := filepath.Join(home, ".persishtent", sessionName+".log")
 	_ = os.Remove(sockPath)
-	_ = os.Remove(logPath)
+	
+	// Pre-fill log to test truncation
+	garbage := []byte("OLD_SESSION_DATA_SHOULD_BE_GONE")
+	if err := os.WriteFile(logPath, garbage, 0600); err != nil {
+		t.Fatalf("Failed to write garbage log: %v", err)
+	}
 
 	// Start Session (detached)
 	startCmd := exec.Command(binPath, "start", sessionName)
@@ -42,6 +47,29 @@ func TestIntegration(t *testing.T) {
 	
 	// Give it a moment to initialize
 	time.Sleep(2 * time.Second)
+	
+	// Check if log was truncated
+	content, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("Failed to read log file: %v", err)
+	}
+	if string(content) == string(garbage) {
+		t.Fatalf("Log file was not truncated! Content: %s", string(content))
+	}
+	// It might contain new data (shell prompt), but it shouldn't START with garbage unless the shell output matched it (unlikely)
+	// or if it wasn't truncated. 
+	// If it wasn't truncated, it would be "OLD...<new data>"
+	// We can check if it contains the garbage.
+	// Actually, if we use O_TRUNC, the file size becomes 0 then grows.
+	// If we use O_APPEND, it stays and grows.
+	// So we check if content contains the garbage string.
+	// Ideally we check if it *starts* with it? No, because O_TRUNC wipes it.
+	// So if we find the garbage string, it's a fail (unless the new shell randomly generated it).
+	for i := 0; i < len(content)-len(garbage)+1; i++ {
+		if string(content[i:i+len(garbage)]) == string(garbage) {
+			t.Fatalf("Log file contains old data! Truncation failed.")
+		}
+	}
 	
 	// Send command
 	markerFile := filepath.Join(tmpDir, "marker")
