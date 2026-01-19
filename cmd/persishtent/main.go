@@ -148,5 +148,6 @@ func printHelp() {
 	fmt.Println("  persishtent kill <name>    Kill an active session")
 	fmt.Println("")
 	fmt.Println("Shortcuts:")
-	fmt.Println("  Ctrl+D                     Detach from session")
+	fmt.Println("  Ctrl+D, d                  Detach from session")
+	fmt.Println("  Ctrl+D, Ctrl+D             Send Ctrl+D to session")
 }

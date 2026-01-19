@@ -1,7 +1,6 @@
 package client
 
 import (
-	"bytes"
 	"io"
 	"net"
 	"os"
@@ -61,29 +60,46 @@ func Attach(name string) error {
 	// 6. Stdin -> Socket
 	go func() {
 		buf := make([]byte, 1024)
+		var pendingCtrlD bool
+
 		for {
 			n, err := os.Stdin.Read(buf)
 			if err != nil {
-				// If Stdin fails, we likely want to exit
 				return
 			}
 			data := buf[:n]
-			
-			// Check for Ctrl+D (0x04) to detach
-			if idx := bytes.IndexByte(data, 0x04); idx >= 0 {
-				// Send any data before the Ctrl+D
-				if idx > 0 {
-					_ = protocol.WritePacket(conn, protocol.TypeData, data[:idx])
-				}
-				// Close connection to trigger exit in main loop
-				conn.Close()
-				return
-			}
 
-			err = protocol.WritePacket(conn, protocol.TypeData, data)
-			if err != nil {
-				return
+			for _, b := range data {
+				if pendingCtrlD {
+					pendingCtrlD = false
+					if b == 'd' {
+						// Ctrl+D, d -> Detach
+						conn.Close()
+						return
+					} else if b == 0x04 {
+						// Ctrl+D, Ctrl+D -> Send single Ctrl+D
+						if err := protocol.WritePacket(conn, protocol.TypeData, []byte{0x04}); err != nil {
+							return
+						}
+					} else {
+						// Ctrl+D, <other> -> Send Ctrl+D then <other>
+						if err := protocol.WritePacket(conn, protocol.TypeData, []byte{0x04, b}); err != nil {
+							return
+						}
+					}
+				} else {
+					if b == 0x04 {
+						pendingCtrlD = true
+					} else {
+						if err := protocol.WritePacket(conn, protocol.TypeData, []byte{b}); err != nil {
+							return
+						}
+					}
+				}
 			}
+			
+			// Note: If data ended with Ctrl+D, pendingCtrlD remains true
+			// and we wait for next read.
 		}
 	}()
 
