@@ -1,7 +1,6 @@
 package server
 
 import (
-	"io"
 	"net"
 	"os"
 	"os/exec"

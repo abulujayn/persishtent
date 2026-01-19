@@ -146,4 +146,7 @@ func printHelp() {
 	fmt.Println("  persishtent start <name>   Start a new session")
 	fmt.Println("  persishtent attach <name>  Attach to an existing session")
 	fmt.Println("  persishtent kill <name>    Kill an active session")
+	fmt.Println("")
+	fmt.Println("Shortcuts:")
+	fmt.Println("  Ctrl+D                     Detach from session")
 }

@@ -41,5 +41,9 @@ Create a persistent shell proxy layer "persishtent" in Go that supports detach/r
     - [x] Integration test verifying persistence and detach/attach
 
 - [x] **Refinement**
+
     - [x] Clean up help messages
+
     - [x] Ensure "native-like feel" (raw mode handling)
+
+    - [x] Set detach shortcut to Ctrl+D

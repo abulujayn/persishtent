@@ -1,6 +1,7 @@
 package client
 
 import (
+	"bytes"
 	"io"
 	"net"
 	"os"
@@ -66,7 +67,20 @@ func Attach(name string) error {
 				// If Stdin fails, we likely want to exit
 				return
 			}
-			err = protocol.WritePacket(conn, protocol.TypeData, buf[:n])
+			data := buf[:n]
+			
+			// Check for Ctrl+D (0x04) to detach
+			if idx := bytes.IndexByte(data, 0x04); idx >= 0 {
+				// Send any data before the Ctrl+D
+				if idx > 0 {
+					_ = protocol.WritePacket(conn, protocol.TypeData, data[:idx])
+				}
+				// Close connection to trigger exit in main loop
+				conn.Close()
+				return
+			}
+
+			err = protocol.WritePacket(conn, protocol.TypeData, data)
 			if err != nil {
 				return
 			}
