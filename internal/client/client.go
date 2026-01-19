@@ -19,10 +19,13 @@ import (
 var ErrDetached = errors.New("detached")
 
 // Attach connects to an existing session
-func Attach(name string) error {
-	sockPath, err := session.GetSocketPath(name)
-	if err != nil {
-		return err
+func Attach(name string, sockPath string) error {
+	var err error
+	if sockPath == "" {
+		sockPath, err = session.GetSocketPath(name)
+		if err != nil {
+			return err
+		}
 	}
 
 	// 1. Connect
@@ -205,10 +208,13 @@ func sendResize(conn net.Conn) {
 }
 
 // Kill sends a termination signal to the session
-func Kill(name string) error {
-	sockPath, err := session.GetSocketPath(name)
-	if err != nil {
-		return err
+func Kill(name string, sockPath string) error {
+	var err error
+	if sockPath == "" {
+		sockPath, err = session.GetSocketPath(name)
+		if err != nil {
+			return err
+		}
 	}
 
 	conn, err := net.Dial("unix", sockPath)

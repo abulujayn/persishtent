@@ -21,7 +21,7 @@ type Server struct {
 }
 
 // Run starts the session server. It blocks until the shell process exits.
-func Run(name string) error {
+func Run(name string, sockPath string) error {
 	// 1. Setup Log
 	logPath, err := session.GetLogPath(name)
 	if err != nil {
@@ -59,9 +59,11 @@ func Run(name string) error {
 	})
 
 	// 3. Setup Socket
-	sockPath, err := session.GetSocketPath(name)
-	if err != nil {
-		return err
+	if sockPath == "" {
+		sockPath, err = session.GetSocketPath(name)
+		if err != nil {
+			return err
+		}
 	}
 	_ = os.Remove(sockPath)
 

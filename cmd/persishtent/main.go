@@ -1,6 +1,7 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	"os"
 	"os/exec"
@@ -22,7 +23,7 @@ func checkNesting() {
 func main() {
 	if len(os.Args) < 2 {
 		checkNesting()
-		startSession(generateAutoName())
+		startSession(generateAutoName(), false, "")
 		return
 	}
 
@@ -30,18 +31,30 @@ func main() {
 
 	switch cmd {
 	case "start", "s":
+		startCmd := flag.NewFlagSet("start", flag.ExitOnError)
+		detach := startCmd.Bool("d", false, "Start in detached mode")
+		sock := startCmd.String("s", "", "Custom socket path")
+		startCmd.Parse(os.Args[2:])
+
 		checkNesting()
-		var name string
-		if len(os.Args) < 3 {
-			name = generateAutoName()
+		name := ""
+		if startCmd.NArg() > 0 {
+			name = startCmd.Arg(0)
 		} else {
-			name = os.Args[2]
+			name = generateAutoName()
 		}
-		startSession(name)
+		startSession(name, *detach, *sock)
+
 	case "attach", "a":
+		attachCmd := flag.NewFlagSet("attach", flag.ExitOnError)
+		sock := attachCmd.String("s", "", "Custom socket path")
+		attachCmd.Parse(os.Args[2:])
+
 		checkNesting()
-		var name string
-		if len(os.Args) < 3 {
+		name := ""
+		if attachCmd.NArg() > 0 {
+			name = attachCmd.Arg(0)
+		} else {
 			sessions, err := session.List()
 			if err != nil {
 				fmt.Printf("Error checking sessions: %v\n", err)
@@ -59,28 +72,42 @@ func main() {
 				}
 				return
 			}
-		} else {
-			name = os.Args[2]
 		}
-		attachSession(name)
+		attachSession(name, *sock)
+
 	case "kill", "k":
-		if len(os.Args) < 3 {
-			fmt.Println("Usage: persishtent kill <name>")
-			return
-		}
-		if err := client.Kill(os.Args[2]); err != nil {
-			fmt.Printf("Error killing session '%s': %v\n", os.Args[2], err)
+		killCmd := flag.NewFlagSet("kill", flag.ExitOnError)
+		sock := killCmd.String("s", "", "Custom socket path")
+		killCmd.Parse(os.Args[2:])
+
+		name := ""
+		if killCmd.NArg() > 0 {
+			name = killCmd.Arg(0)
 		} else {
-			fmt.Printf("Session '%s' killed.\n", os.Args[2])
-		}
-	case "daemon": // Internal
-		if len(os.Args) < 3 {
+			fmt.Println("Usage: persishtent kill [-s socket] <name>")
 			return
 		}
+
+		if err := client.Kill(name, *sock); err != nil {
+			fmt.Printf("Error killing session '%s': %v\n", name, err)
+		} else {
+			fmt.Printf("Session '%s' killed.\n", name)
+		}
+
+	case "daemon": // Internal
+		daemonCmd := flag.NewFlagSet("daemon", flag.ExitOnError)
+		sock := daemonCmd.String("s", "", "Custom socket path")
+		daemonCmd.Parse(os.Args[2:])
+
+		if daemonCmd.NArg() < 1 {
+			return
+		}
+		name := daemonCmd.Arg(0)
 		// Daemon runs until shell exits
-		if err := server.Run(os.Args[2]); err != nil {
+		if err := server.Run(name, *sock); err != nil {
 			os.Exit(1)
 		}
+
 	case "list", "ls":
 		listSessions()
 	case "help":
@@ -91,11 +118,9 @@ func main() {
 		// Check if session exists
 		sock, _ := session.GetSocketPath(cmd)
 		if _, err := os.Stat(sock); err == nil {
-			attachSession(cmd)
+			attachSession(cmd, "")
 		} else {
-			// Ask or just start?
-			// Let's just start for convenience
-			startSession(cmd)
+			startSession(cmd, false, "")
 		}
 	}
 }
@@ -117,11 +142,19 @@ func generateAutoName() string {
 	}
 }
 
-func startSession(name string) {
+func startSession(name string, detach bool, sockPath string) {
 	// 1. Check if already exists
-	sock, _ := session.GetSocketPath(name)
-	if _, err := os.Stat(sock); err == nil {
-		attachSession(name)
+	checkPath := sockPath
+	if checkPath == "" {
+		checkPath, _ = session.GetSocketPath(name)
+	}
+
+	if _, err := os.Stat(checkPath); err == nil {
+		if detach {
+			fmt.Printf("Session '%s' already exists.\n", name)
+			return
+		}
+		attachSession(name, sockPath)
 		return
 	}
 
@@ -132,29 +165,33 @@ func startSession(name string) {
 		return
 	}
 
-	cmd := exec.Command(exe, "daemon", name)
+	args := []string{"daemon"}
+	if sockPath != "" {
+		args = append(args, "-s", sockPath)
+	}
+	args = append(args, name)
+
+	cmd := exec.Command(exe, args...)
 	// Detach process
 	cmd.SysProcAttr = &syscall.SysProcAttr{
 		Setsid: true,
 	}
-
-	// We don't want the daemon to inherit our stdin/stdout
-	// But we might want to capture stderr for debugging?
-	// For now, dev null.
-	// Actually, server.Run logs to .log file (via PTY output), but internal errors?
-	// Maybe daemon should log internal errors to a separate file.
-	// For MVP, we let it fly.
 
 	if err := cmd.Start(); err != nil {
 		fmt.Println("Error starting session:", err)
 		return
 	}
 
+	if detach {
+		fmt.Printf("Session '%s' started in detached mode.\n", name)
+		return
+	}
+
 	// 3. Attach with retry
 	// Wait for socket to appear
 	for i := 0; i < 10; i++ {
-		if _, err := os.Stat(sock); err == nil {
-			attachSession(name)
+		if _, err := os.Stat(checkPath); err == nil {
+			attachSession(name, sockPath)
 			return
 		}
 		time.Sleep(100 * time.Millisecond)
@@ -162,15 +199,13 @@ func startSession(name string) {
 	fmt.Println("Timed out waiting for session to start.")
 }
 
-func attachSession(name string) {
+func attachSession(name string, sockPath string) {
 	fmt.Print("\x1b[H\x1b[2J")
 	fmt.Printf("[attaching to session '%s'. press ctrl+d, d to detach]\n", name)
-	if err := client.Attach(name); err != nil {
+	if err := client.Attach(name, sockPath); err != nil {
 		if err == client.ErrDetached {
 			fmt.Println("\n[detached]")
 		} else {
-			// If attach fails (e.g. connection refused), maybe the socket is stale?
-			// We could check that.
 			fmt.Printf("[error attaching to '%s': %v]\n", name, err)
 		}
 	} else {
@@ -205,9 +240,11 @@ func printHelp() {
 	fmt.Println("  persishtent                      Start a new auto-named session")
 	fmt.Println("  persishtent <name>               Start or attach to session")
 	fmt.Println("  persishtent list (ls)            List active sessions")
-	fmt.Println("  persishtent start (s) [name]     Start a new session (auto-named s0, s1... if omitted)")
-	fmt.Println("  persishtent attach (a) [name]    Attach to an existing session (auto-selects if only one)")
-	fmt.Println("  persishtent kill (k) <name>      Kill an active session")
+	fmt.Println("  persishtent start (s) [flags] [name]")
+	fmt.Println("    -d                             Start in detached mode")
+	fmt.Println("    -s <path>                      Custom socket path")
+	fmt.Println("  persishtent attach (a) [-s path] [name]")
+	fmt.Println("  persishtent kill (k) [-s path] <name>")
 	fmt.Println("")
 	fmt.Println("Shortcuts:")
 	fmt.Println("  Ctrl+D, d                        Detach from session")
