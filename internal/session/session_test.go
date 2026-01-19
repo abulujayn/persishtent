@@ -97,3 +97,20 @@ func TestSessionInfo(t *testing.T) {
 		t.Errorf("Command mismatch. Got %s, want %s", readInfo.Command, info.Command)
 	}
 }
+
+func TestValidateName(t *testing.T) {
+	validNames := []string{"session1", "my_session", "test-session", "123", "S_1-2"}
+	invalidNames := []string{"", "session 1", "session/1", "session!", "session$"}
+
+	for _, name := range validNames {
+		if err := ValidateName(name); err != nil {
+			t.Errorf("Expected name '%s' to be valid, but got error: %v", name, err)
+		}
+	}
+
+	for _, name := range invalidNames {
+		if err := ValidateName(name); err == nil {
+			t.Errorf("Expected name '%s' to be invalid, but got no error", name)
+		}
+	}
+}

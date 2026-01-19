@@ -5,8 +5,22 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"syscall"
 )
+
+var nameRegex = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
+
+// ValidateName checks if a session name is valid
+func ValidateName(name string) error {
+	if name == "" {
+		return fmt.Errorf("session name cannot be empty")
+	}
+	if !nameRegex.MatchString(name) {
+		return fmt.Errorf("session name must only contain alphanumeric characters, underscores, and hyphens")
+	}
+	return nil
+}
 
 const (
 	DirName = ".persishtent"

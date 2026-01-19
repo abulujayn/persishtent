@@ -44,6 +44,10 @@ func main() {
 		} else {
 			name = generateAutoName()
 		}
+		if err := session.ValidateName(name); err != nil {
+			fmt.Printf("Error: %v\n", err)
+			return
+		}
 		startSession(name, *detach, *sock, *command)
 
 	case "attach", "a":
@@ -111,6 +115,10 @@ func main() {
 	case "rename", "r":
 		if len(os.Args) < 4 {
 			fmt.Println("Usage: persishtent rename <old> <new>")
+			return
+		}
+		if err := session.ValidateName(os.Args[3]); err != nil {
+			fmt.Printf("Error: %v\n", err)
 			return
 		}
 		if err := session.Rename(os.Args[2], os.Args[3]); err != nil {
