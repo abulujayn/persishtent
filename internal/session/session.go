@@ -3,10 +3,12 @@ package session
 import (
 	"encoding/json"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"regexp"
 	"syscall"
+	"time"
 )
 
 var nameRegex = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
@@ -33,7 +35,7 @@ type Info struct {
 	Command string `json:"command"`
 }
 
-// IsAlive checks if the shell process is still running
+// IsAlive checks if the shell process is still running and the socket is active
 func (i Info) IsAlive() bool {
 	if i.PID <= 0 {
 		return false
@@ -42,9 +44,21 @@ func (i Info) IsAlive() bool {
 	if err != nil {
 		return false
 	}
-	// Signal 0 is used to check for the existence of a process
-	err = process.Signal(syscall.Signal(0))
-	return err == nil
+	// Signal 0 checks for process existence
+	if err := process.Signal(syscall.Signal(0)); err != nil {
+		return false
+	}
+
+	// Double check socket liveness to handle PID reuse after reboot/crash
+	dir, _ := EnsureDir()
+	sockPath := filepath.Join(dir, i.Name+".sock")
+	conn, err := net.DialTimeout("unix", sockPath, 50*time.Millisecond)
+	if err != nil {
+		// Socket file exists but no one is listening -> stale
+		return false
+	}
+	conn.Close()
+	return true
 }
 
 // Cleanup removes all files associated with a session
