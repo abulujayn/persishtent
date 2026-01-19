@@ -94,3 +94,21 @@ func sendResize(conn net.Conn) {
 	payload := protocol.ResizePayload(uint16(h), uint16(w))
 	_ = protocol.WritePacket(conn, protocol.TypeResize, payload)
 }
+
+// Kill sends a termination signal to the session
+func Kill(name string) error {
+	sockPath, err := session.GetSocketPath(name)
+	if err != nil {
+		return err
+	}
+
+	conn, err := net.Dial("unix", sockPath)
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+
+	// Send SIGTERM (15)
+	payload := []byte{byte(syscall.SIGTERM)}
+	return protocol.WritePacket(conn, protocol.TypeSignal, payload)
+}

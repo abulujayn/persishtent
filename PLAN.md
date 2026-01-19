@@ -5,42 +5,41 @@ Create a persistent shell proxy layer "persishtent" in Go that supports detach/r
 
 ## Roadmap
 
-- [ ] **Initialization**
+- [x] **Initialization**
     - [x] Initialize Go module (`go mod init`)
-    - [ ] Create structure for CLI entry point
+    - [x] Create structure for CLI entry point
 
-- [ ] **Core Logic - Session Management**
-    - [ ] Define `Session` struct (ID, PID, Socket/Path, LogPath)
-    - [ ] Implement session creation (spawning a shell)
-    - [ ] Implement session listing
+- [x] **Core Logic - Session Management**
+    - [x] Define `Session` struct (ID, PID, Socket/Path, LogPath)
+    - [x] Implement session creation (spawning a shell)
+    - [x] Implement session listing
 
-- [ ] **PTY & Shell Interaction**
-    - [ ] Use `github.com/creack/pty` to spawn shell
-    - [ ] Handle window resize events (SIGWINCH)
-    - [ ] Handle input/output copying
+- [x] **PTY & Shell Interaction**
+    - [x] Use `github.com/creack/pty` to spawn shell
+    - [x] Handle window resize events (SIGWINCH)
+    - [x] Handle input/output copying
 
-- [ ] **Persistence & Output**
-    - [ ] Write shell output to a persistent log file
-    - [ ] On attach, replay log file to stdout
+- [x] **Persistence & Output**
+    - [x] Write shell output to a persistent log file
+    - [x] On attach, replay log file to stdout
 
-- [ ] **Socket/IPC**
-    - [ ] Setup unix socket for communication or direct process control (start/attach)
-    - [ ] If using direct attach (no daemon), ensure process stays alive when client detaches. 
-    - *Design Decision*: `persishtent` likely needs a server/daemon mode or a background process per session.
-    - *Simpler Approach*: `persishtent start` spawns the PTY and the shell in the background (or keeps running as the master), and `persishtent attach` connects to it.
-    - Let's go with: `persishtent session-name` starts a session or attaches if exists.
+- [x] **Socket/IPC**
+    - [x] Setup unix socket for communication or direct process control (start/attach)
+    - [x] If using direct attach (no daemon), ensure process stays alive when client detaches. 
+    - [x] `persishtent start` spawns a daemon process per session.
 
-- [ ] **CLI Commands**
-    - [ ] `persishtent` (default: list sessions or help)
-    - [ ] `persishtent new <name>`
-    - [ ] `persishtent attach <name>`
-    - [ ] `persishtent list`
-    - [ ] `persishtent kill <name>`
+- [x] **CLI Commands**
+    - [x] `persishtent` (default: list sessions or help)
+    - [x] `persishtent new <name>` (Implemented as `start`)
+    - [x] `persishtent attach <name>`
+    - [x] `persishtent list`
+    - [x] `persishtent kill <name>`
 
-- [ ] **Testing**
-    - [ ] Unit tests for session logic
-    - [ ] Unit tests for PTY wrapper (mocking if possible)
+- [x] **Testing**
+    - [x] Unit tests for session logic
+    - [x] Unit tests for Protocol
+    - [x] Integration test verifying persistence and detach/attach
 
-- [ ] **Refinement**
-    - [ ] Clean up help messages
-    - [ ] Ensure "native-like feel" (raw mode handling)
+- [x] **Refinement**
+    - [x] Clean up help messages
+    - [x] Ensure "native-like feel" (raw mode handling)

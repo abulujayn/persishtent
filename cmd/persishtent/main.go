@@ -33,6 +33,16 @@ func main() {
 			return
 		}
 		attachSession(os.Args[2])
+	case "kill":
+		if len(os.Args) < 3 {
+			fmt.Println("Usage: persishtent kill <name>")
+			return
+		}
+		if err := client.Kill(os.Args[2]); err != nil {
+			fmt.Printf("Error killing session '%s': %v\n", os.Args[2], err)
+		} else {
+			fmt.Printf("Session '%s' killed.\n", os.Args[2])
+		}
 	case "daemon": // Internal
 		if len(os.Args) < 3 {
 			return
@@ -135,4 +145,5 @@ func printHelp() {
 	fmt.Println("  persishtent list           List active sessions")
 	fmt.Println("  persishtent start <name>   Start a new session")
 	fmt.Println("  persishtent attach <name>  Attach to an existing session")
+	fmt.Println("  persishtent kill <name>    Kill an active session")
 }

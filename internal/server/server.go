@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"sync"
+	"syscall"
 
 	"github.com/creack/pty"
 	"persishtent/internal/protocol"
@@ -14,6 +15,7 @@ import (
 
 type Server struct {
 	Name    string
+	Cmd     *exec.Cmd
 	Clients map[net.Conn]struct{}
 	Lock    sync.Mutex
 }
@@ -36,13 +38,11 @@ func Run(name string) error {
 	if shell == "" {
 		shell = "bash"
 	}
-	// Fallback if bash not found?
 	if _, err := exec.LookPath(shell); err != nil {
 		shell = "sh"
 	}
 
 	cmd := exec.Command(shell)
-	// Ensure TERM is set for proper shell behavior
 	cmd.Env = append(os.Environ(), "TERM=xterm-256color")
 
 	ptmx, err := pty.Start(cmd)
@@ -56,9 +56,6 @@ func Run(name string) error {
 	if err != nil {
 		return err
 	}
-	// Attempt to remove existing socket.
-	// If it's in use, Listen will fail (or we replace it).
-	// Realistically, we should check liveness before calling Run.
 	_ = os.Remove(sockPath)
 
 	l, err := net.Listen("unix", sockPath)
@@ -69,31 +66,24 @@ func Run(name string) error {
 
 	srv := &Server{
 		Name:    name,
+		Cmd:     cmd,
 		Clients: make(map[net.Conn]struct{}),
 	}
 
-	// 4. Output Loop: PTY -> Log + Clients
+	// 4. Output Loop
 	go func() {
 		buf := make([]byte, 4096)
 		for {
 			n, err := ptmx.Read(buf)
 			if err != nil {
-				if err != io.EOF {
-					// We might log this internal error somewhere
-				}
 				break
 			}
 			data := buf[:n]
-
-			// Write to log
 			if _, err := logFile.Write(data); err != nil {
-				// Log write error
+				// ignore
 			}
-
-			// Broadcast to clients
 			srv.broadcast(data)
 		}
-		// When PTY closes, we close the listener to unblock Accept()
 		l.Close()
 	}()
 
@@ -108,22 +98,16 @@ func Run(name string) error {
 		}
 	}()
 
-	// 6. Wait for process to exit
+	// 6. Wait
 	err = cmd.Wait()
-	
-	// Cleanup socket immediately
 	_ = os.Remove(sockPath)
-	
 	return err
 }
 
 func (s *Server) broadcast(data []byte) {
 	s.Lock.Lock()
 	defer s.Lock.Unlock()
-	
 	for conn := range s.Clients {
-		// If write fails, we assume client is dead.
-		// handleClient will likely detect this on Read as well, or we force close.
 		err := protocol.WritePacket(conn, protocol.TypeData, data)
 		if err != nil {
 			conn.Close()
@@ -144,7 +128,6 @@ func (s *Server) handleClient(conn net.Conn, ptmx *os.File) {
 		conn.Close()
 	}()
 
-	// Read loop
 	for {
 		t, payload, err := protocol.ReadPacket(conn)
 		if err != nil {
@@ -160,6 +143,13 @@ func (s *Server) handleClient(conn net.Conn, ptmx *os.File) {
 			rows, cols := protocol.DecodeResizePayload(payload)
 			ws := &pty.Winsize{Rows: rows, Cols: cols}
 			_ = pty.Setsize(ptmx, ws)
+		case protocol.TypeSignal:
+			if len(payload) > 0 {
+				sig := syscall.Signal(payload[0])
+				if s.Cmd != nil && s.Cmd.Process != nil {
+					_ = s.Cmd.Process.Signal(sig)
+				}
+			}
 		}
 	}
 }
