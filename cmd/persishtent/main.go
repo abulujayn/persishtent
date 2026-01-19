@@ -23,7 +23,7 @@ func checkNesting() {
 func main() {
 	if len(os.Args) < 2 {
 		checkNesting()
-		startSession(generateAutoName(), false, "", "")
+		startSession(generateAutoName(), false, "", "", true)
 		return
 	}
 
@@ -48,11 +48,12 @@ func main() {
 			fmt.Printf("Error: %v\n", err)
 			return
 		}
-		startSession(name, *detach, *sock, *command)
+		startSession(name, *detach, *sock, *command, true)
 
 	case "attach", "a":
 		attachCmd := flag.NewFlagSet("attach", flag.ExitOnError)
 		sock := attachCmd.String("s", "", "Custom socket path")
+		noReplay := attachCmd.Bool("n", false, "Do not replay session output")
 		attachCmd.Parse(os.Args[2:])
 
 		checkNesting()
@@ -78,7 +79,7 @@ func main() {
 				return
 			}
 		}
-		attachSession(name, *sock)
+		attachSession(name, *sock, !*noReplay)
 
 	case "kill", "k":
 		killCmd := flag.NewFlagSet("kill", flag.ExitOnError)
@@ -152,9 +153,9 @@ func main() {
 		// Check if session exists
 		sock, _ := session.GetSocketPath(cmd)
 		if _, err := os.Stat(sock); err == nil {
-			attachSession(cmd, "")
+			attachSession(cmd, "", true)
 		} else {
-			startSession(cmd, false, "", "")
+			startSession(cmd, false, "", "", true)
 		}
 	}
 }
@@ -176,7 +177,7 @@ func generateAutoName() string {
 	}
 }
 
-func startSession(name string, detach bool, sockPath string, customCmd string) {
+func startSession(name string, detach bool, sockPath string, customCmd string, replay bool) {
 	// 1. Check if already exists
 	checkPath := sockPath
 	if checkPath == "" {
@@ -188,7 +189,7 @@ func startSession(name string, detach bool, sockPath string, customCmd string) {
 			fmt.Printf("Session '%s' already exists.\n", name)
 			return
 		}
-		attachSession(name, sockPath)
+		attachSession(name, sockPath, replay)
 		return
 	}
 
@@ -228,7 +229,7 @@ func startSession(name string, detach bool, sockPath string, customCmd string) {
 	// Wait for socket to appear
 	for i := 0; i < 10; i++ {
 		if _, err := os.Stat(checkPath); err == nil {
-			attachSession(name, sockPath)
+			attachSession(name, sockPath, replay)
 			return
 		}
 		time.Sleep(100 * time.Millisecond)
@@ -236,10 +237,10 @@ func startSession(name string, detach bool, sockPath string, customCmd string) {
 	fmt.Println("Timed out waiting for session to start.")
 }
 
-func attachSession(name string, sockPath string) {
+func attachSession(name string, sockPath string, replay bool) {
 	fmt.Print("\x1b[H\x1b[2J")
 	fmt.Printf("[attaching to session '%s'. press ctrl+d, d to detach]\n", name)
-	if err := client.Attach(name, sockPath); err != nil {
+	if err := client.Attach(name, sockPath, replay); err != nil {
 		if err == client.ErrDetached {
 			fmt.Println("\n[detached]")
 		} else if err == client.ErrKicked {
@@ -283,7 +284,9 @@ func printHelp() {
 	fmt.Println("    -d                             Start in detached mode")
 	fmt.Println("    -s <path>                      Custom socket path")
 	fmt.Println("    -c <cmd>                       Custom command to run")
-	fmt.Println("  persishtent attach (a) [-s path] [name]")
+	fmt.Println("  persishtent attach (a) [flags] [name]")
+	fmt.Println("    -n                             Do not replay session output")
+	fmt.Println("    -s <path>                      Custom socket path")
 	fmt.Println("  persishtent kill (k) [flags] [name]")
 	fmt.Println("    -a                             Kill all sessions")
 	fmt.Println("    -s <path>                      Custom socket path")

@@ -20,7 +20,7 @@ var ErrDetached = errors.New("detached")
 var ErrKicked = errors.New("kicked by another session")
 
 // Attach connects to an existing session
-func Attach(name string, sockPath string) error {
+func Attach(name string, sockPath string, replay bool) error {
 	var err error
 	if sockPath == "" {
 		sockPath, err = session.GetSocketPath(name)
@@ -45,12 +45,14 @@ func Attach(name string, sockPath string) error {
 	defer func() { _ = term.Restore(int(os.Stdin.Fd()), oldState) }()
 
 	// 3. Replay Log
-	logPath, err := session.GetLogPath(name)
-	if err == nil {
-		f, err := os.Open(logPath)
+	if replay {
+		logPath, err := session.GetLogPath(name)
 		if err == nil {
-			_, _ = io.Copy(os.Stdout, f)
-			f.Close()
+			f, err := os.Open(logPath)
+			if err == nil {
+				_, _ = io.Copy(os.Stdout, f)
+				f.Close()
+			}
 		}
 	}
 

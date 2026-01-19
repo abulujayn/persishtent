@@ -30,10 +30,27 @@ go build -o persishtent cmd/persishtent/main.go
 | `persishtent` | - | Start a new auto-named session (e.g., `s0`). |
 | `persishtent <name>` | - | Start or attach to a session named `<name>`. |
 | `persishtent list` | `ls` | List active sessions with PID and command. |
-| `persishtent start [name]` | `s` | Start a new session (auto-named if omitted). |
-| `persishtent attach [name]` | `a` | Attach to an existing session (auto-selects if only one). |
-| `persishtent kill <name>` | `k` | Forcefully terminate an active session. |
+| `persishtent start [flags] [name]` | `s` | Start a new session (auto-named if omitted). |
+| `persishtent attach [flags] [name]` | `a` | Attach to an existing session (auto-selects if only one). |
+| `persishtent kill [flags] [name]` | `k` | Forcefully terminate active sessions. |
+| `persishtent rename <old> <new>` | `r` | Rename an existing session. |
 | `persishtent help` | - | Show help message. |
+
+### Flags
+
+#### `start`
+- `-d`: Start in detached mode.
+- `-s <path>`: Custom socket path.
+- `-c <cmd>`: Custom command to run.
+
+#### `attach`
+- `-n`: Do not replay session output.
+- `-s <path>`: Custom socket path.
+
+#### `kill`
+- `-a`: Kill all active sessions.
+- `-s <path>`: Custom socket path.
+
 
 ### Shortcuts
 
