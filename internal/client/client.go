@@ -41,8 +41,9 @@ func Attach(name string) error {
 	defer func() { _ = term.Restore(int(os.Stdin.Fd()), oldState) }()
 
 	// 3. Replay Log
-	// Log replay might trigger terminal responses (e.g. Device Attributes).
-	// We need to suppress them.
+	// Clear screen before replay for a clean start
+	_, _ = os.Stdout.Write([]byte("\x1b[H\x1b[2J"))
+
 	logPath, err := session.GetLogPath(name)
 	if err == nil {
 		f, err := os.Open(logPath)
@@ -152,8 +153,8 @@ DrainLoop:
 		t, payload, err := protocol.ReadPacket(conn)
 		if err != nil {
 			if atomic.LoadInt32(&detached) == 1 {
-				// Exit alternate buffer if we were in it
-				_, _ = os.Stdout.Write([]byte("\x1b[?1049l"))
+				// Exit alternate buffer and clear screen
+				_, _ = os.Stdout.Write([]byte("\x1b[?1049l\x1b[H\x1b[2J"))
 				return ErrDetached
 			}
 			return nil
