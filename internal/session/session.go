@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"syscall"
 )
 
 const (
@@ -16,6 +17,28 @@ type Info struct {
 	Name    string `json:"name"`
 	PID     int    `json:"pid"`
 	Command string `json:"command"`
+}
+
+// IsAlive checks if the shell process is still running
+func (i Info) IsAlive() bool {
+	if i.PID <= 0 {
+		return false
+	}
+	process, err := os.FindProcess(i.PID)
+	if err != nil {
+		return false
+	}
+	// Signal 0 is used to check for the existence of a process
+	err = process.Signal(syscall.Signal(0))
+	return err == nil
+}
+
+// Cleanup removes all files associated with a session
+func Cleanup(name string) {
+	dir, _ := EnsureDir()
+	_ = os.Remove(filepath.Join(dir, name+".sock"))
+	_ = os.Remove(filepath.Join(dir, name+".info"))
+	_ = os.Remove(filepath.Join(dir, name+".log"))
 }
 
 // GetHomeDir returns the user's home directory
@@ -109,10 +132,18 @@ func List() ([]Info, error) {
 			name := f.Name()[:len(f.Name())-5]
 			info, err := ReadInfo(name)
 			if err != nil {
-				// Fallback if info file is missing
-				info = Info{Name: name}
+				// If we can't read info, we can't verify PID. 
+				// We assume it might be stale.
+				Cleanup(name)
+				continue
 			}
-			sessions = append(sessions, info)
+			
+			if info.IsAlive() {
+				sessions = append(sessions, info)
+			} else {
+				// Process is dead, clean up stale files
+				Cleanup(name)
+			}
 		}
 	}
 	return sessions, nil

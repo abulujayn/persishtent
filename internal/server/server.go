@@ -4,6 +4,7 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"os/signal"
 	"sync"
 	"syscall"
 
@@ -102,6 +103,14 @@ func Run(name string) error {
 			}
 			go srv.handleClient(conn, ptmx)
 		}
+	}()
+
+	// 5.5 Handle Signals for graceful cleanup
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGINT)
+	go func() {
+		<-sigCh
+		_ = cmd.Process.Kill()
 	}()
 
 	// 6. Wait
