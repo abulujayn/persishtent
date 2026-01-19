@@ -39,9 +39,9 @@ func main() {
 			return
 		}
 		if err := client.Kill(os.Args[2]); err != nil {
-			fmt.Printf("[error killing session '%s': %v]\n", os.Args[2], err)
+			fmt.Printf("Error killing session '%s': %v\n", os.Args[2], err)
 		} else {
-			fmt.Printf("[session '%s' killed]\n", os.Args[2])
+			fmt.Printf("Session '%s' killed.\n", os.Args[2])
 		}
 	case "daemon": // Internal
 		if len(os.Args) < 3 {
@@ -132,14 +132,14 @@ func attachSession(name string) {
 func listSessions() {
 	sessions, err := session.List()
 	if err != nil {
-		fmt.Printf("[error listing sessions: %v]\n", err)
+		fmt.Printf("Error listing sessions: %v\n", err)
 		return
 	}
 	if len(sessions) == 0 {
-		fmt.Println("[no active sessions]")
+		fmt.Println("No active sessions.")
 		return
 	}
-	fmt.Println("[active sessions]")
+	fmt.Println("Active sessions:")
 	for _, s := range sessions {
 		fmt.Printf("  %s\n", s)
 	}
