@@ -1,16 +1,20 @@
 package client
 
 import (
+	"errors"
 	"io"
 	"net"
 	"os"
 	"os/signal"
+	"sync/atomic"
 	"syscall"
 
 	"golang.org/x/term"
 	"persishtent/internal/protocol"
 	"persishtent/internal/session"
 )
+
+var ErrDetached = errors.New("detached")
 
 // Attach connects to an existing session
 func Attach(name string) error {
@@ -20,8 +24,6 @@ func Attach(name string) error {
 	}
 
 	// 1. Replay Log
-	// We do this before raw mode to keep it simple, 
-	// assuming the log contains necessary escape codes.
 	logPath, err := session.GetLogPath(name)
 	if err == nil {
 		f, err := os.Open(logPath)
@@ -57,6 +59,8 @@ func Attach(name string) error {
 		}
 	}()
 
+	var detached int32 // 0 = false, 1 = true
+
 	// 6. Stdin -> Socket
 	go func() {
 		buf := make([]byte, 1024)
@@ -74,6 +78,7 @@ func Attach(name string) error {
 					pendingCtrlD = false
 					if b == 'd' {
 						// Ctrl+D, d -> Detach
+						atomic.StoreInt32(&detached, 1)
 						conn.Close()
 						return
 					} else if b == 0x04 {
@@ -97,9 +102,6 @@ func Attach(name string) error {
 					}
 				}
 			}
-			
-			// Note: If data ended with Ctrl+D, pendingCtrlD remains true
-			// and we wait for next read.
 		}
 	}()
 
@@ -107,7 +109,11 @@ func Attach(name string) error {
 	for {
 		t, payload, err := protocol.ReadPacket(conn)
 		if err != nil {
-			// Server disconnected or error
+			// Check if we detached
+			if atomic.LoadInt32(&detached) == 1 {
+				return ErrDetached
+			}
+			// Otherwise, assume server disconnected (process ended)
 			return nil
 		}
 		if t == protocol.TypeData {

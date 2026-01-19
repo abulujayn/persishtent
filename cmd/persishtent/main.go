@@ -115,10 +115,17 @@ func startSession(name string) {
 }
 
 func attachSession(name string) {
+	fmt.Printf("Attaching to session '%s'. Press Ctrl+D, d to detach.\n", name)
 	if err := client.Attach(name); err != nil {
-		// If attach fails (e.g. connection refused), maybe the socket is stale?
-		// We could check that.
-		fmt.Printf("Error attaching to '%s': %v\n", name, err)
+		if err == client.ErrDetached {
+			fmt.Println("\nDetached.")
+		} else {
+			// If attach fails (e.g. connection refused), maybe the socket is stale?
+			// We could check that.
+			fmt.Printf("Error attaching to '%s': %v\n", name, err)
+		}
+	} else {
+		fmt.Println("\nSession terminated.")
 	}
 }
 
