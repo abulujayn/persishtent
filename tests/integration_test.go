@@ -162,11 +162,19 @@ func TestIntegration(t *testing.T) {
 	}
 
 	// --- Test Nesting Protection ---
-	nestCmd := exec.Command(binPath, "list")
+	// 1. List should NOT fail
+	listCmd := exec.Command(binPath, "list")
+	listCmd.Env = append(os.Environ(), "PERSISHTENT_SESSION=fake")
+	if out, err := listCmd.CombinedOutput(); err != nil {
+		t.Fatalf("List command failed inside nested session: %v, out: %s", err, out)
+	}
+
+	// 2. Start should FAIL
+	nestCmd := exec.Command(binPath, "start", "nested-session")
 	nestCmd.Env = append(os.Environ(), "PERSISHTENT_SESSION=fake")
 	out, err := nestCmd.CombinedOutput()
 	if err == nil {
-		t.Fatalf("Expected error when nesting sessions, but got none. Output: %s", out)
+		t.Fatalf("Expected error when nesting sessions (start), but got none. Output: %s", out)
 	}
 	if !bytes.Contains(out, []byte("already inside a persishtent session")) {
 		t.Fatalf("Unexpected error message for nesting protection: %s", out)

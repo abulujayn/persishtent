@@ -12,13 +12,16 @@ import (
 	"persishtent/internal/session"
 )
 
-func main() {
+func checkNesting() {
 	if os.Getenv("PERSISHTENT_SESSION") != "" {
 		fmt.Printf("[error: already inside a persishtent session (%s)]\n", os.Getenv("PERSISHTENT_SESSION"))
 		os.Exit(1)
 	}
+}
 
+func main() {
 	if len(os.Args) < 2 {
+		checkNesting()
 		startSession(generateAutoName())
 		return
 	}
@@ -27,6 +30,7 @@ func main() {
 
 	switch cmd {
 	case "start", "s":
+		checkNesting()
 		var name string
 		if len(os.Args) < 3 {
 			name = generateAutoName()
@@ -35,6 +39,7 @@ func main() {
 		}
 		startSession(name)
 	case "attach", "a":
+		checkNesting()
 		var name string
 		if len(os.Args) < 3 {
 			sessions, err := session.List()
@@ -82,6 +87,7 @@ func main() {
 		printHelp()
 	default:
 		// Treat as attach/start shortcut
+		checkNesting()
 		// Check if session exists
 		sock, _ := session.GetSocketPath(cmd)
 		if _, err := os.Stat(sock); err == nil {
