@@ -152,6 +152,8 @@ DrainLoop:
 		t, payload, err := protocol.ReadPacket(conn)
 		if err != nil {
 			if atomic.LoadInt32(&detached) == 1 {
+				// Exit alternate buffer if we were in it
+				_, _ = os.Stdout.Write([]byte("\x1b[?1049l"))
 				return ErrDetached
 			}
 			return nil
