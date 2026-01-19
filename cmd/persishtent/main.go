@@ -22,11 +22,13 @@ func main() {
 
 	switch cmd {
 	case "start", "s":
+		var name string
 		if len(os.Args) < 3 {
-			fmt.Println("Usage: persishtent start <name>")
-			return
+			name = generateAutoName()
+		} else {
+			name = os.Args[2]
 		}
-		startSession(os.Args[2])
+		startSession(name)
 	case "attach", "a":
 		if len(os.Args) < 3 {
 			fmt.Println("Usage: persishtent attach <name>")
@@ -66,6 +68,23 @@ func main() {
 			// Let's just start for convenience
 			startSession(cmd)
 		}
+	}
+}
+
+func generateAutoName() string {
+	sessions, _ := session.List()
+	used := make(map[string]bool)
+	for _, s := range sessions {
+		used[s] = true
+	}
+
+	i := 0
+	for {
+		name := fmt.Sprintf("s%d", i)
+		if !used[name] {
+			return name
+		}
+		i++
 	}
 }
 
@@ -150,7 +169,7 @@ func printHelp() {
 	fmt.Println("Usage:")
 	fmt.Println("  persishtent <name>               Start or attach to session")
 	fmt.Println("  persishtent list (ls)            List active sessions")
-	fmt.Println("  persishtent start (s) <name>     Start a new session")
+	fmt.Println("  persishtent start (s) [name]     Start a new session (auto-named s0, s1... if omitted)")
 	fmt.Println("  persishtent attach (a) <name>    Attach to an existing session")
 	fmt.Println("  persishtent kill (k) <name>      Kill an active session")
 	fmt.Println("")
