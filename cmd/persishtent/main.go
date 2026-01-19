@@ -39,9 +39,9 @@ func main() {
 			return
 		}
 		if err := client.Kill(os.Args[2]); err != nil {
-			fmt.Printf("Error killing session '%s': %v\n", os.Args[2], err)
+			fmt.Printf("[error killing session '%s': %v]\n", os.Args[2], err)
 		} else {
-			fmt.Printf("Session '%s' killed.\n", os.Args[2])
+			fmt.Printf("[session '%s' killed]\n", os.Args[2])
 		}
 	case "daemon": // Internal
 		if len(os.Args) < 3 {
@@ -115,31 +115,31 @@ func startSession(name string) {
 }
 
 func attachSession(name string) {
-	fmt.Printf("Attaching to session '%s'. Press Ctrl+D, d to detach.\n", name)
+	fmt.Printf("[attaching to session '%s'. press ctrl+d, d to detach]\n", name)
 	if err := client.Attach(name); err != nil {
 		if err == client.ErrDetached {
-			fmt.Println("\nDetached.")
+			fmt.Println("\n[detached]")
 		} else {
 			// If attach fails (e.g. connection refused), maybe the socket is stale?
 			// We could check that.
-			fmt.Printf("Error attaching to '%s': %v\n", name, err)
+			fmt.Printf("[error attaching to '%s': %v]\n", name, err)
 		}
 	} else {
-		fmt.Println("\nSession terminated.")
+		fmt.Println("\n[session terminated]")
 	}
 }
 
 func listSessions() {
 	sessions, err := session.List()
 	if err != nil {
-		fmt.Println("Error listing sessions:", err)
+		fmt.Printf("[error listing sessions: %v]\n", err)
 		return
 	}
 	if len(sessions) == 0 {
-		fmt.Println("No active sessions.")
+		fmt.Println("[no active sessions]")
 		return
 	}
-	fmt.Println("Active sessions:")
+	fmt.Println("[active sessions]")
 	for _, s := range sessions {
 		fmt.Printf("  %s\n", s)
 	}
