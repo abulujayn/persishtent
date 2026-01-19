@@ -7,6 +7,7 @@ import (
 	"os/signal"
 	"sync"
 	"syscall"
+	"time"
 
 	"github.com/creack/pty"
 	"persishtent/internal/protocol"
@@ -61,9 +62,10 @@ func Run(name string, sockPath string, customCmd string) error {
 
 	// 2.5 Write Info
 	_ = session.WriteInfo(session.Info{
-		Name:    name,
-		PID:     cmd.Process.Pid,
-		Command: execCmd,
+		Name:      name,
+		PID:       cmd.Process.Pid,
+		Command:   execCmd,
+		StartTime: time.Now(),
 	})
 
 	// 3. Setup Socket

@@ -270,7 +270,8 @@ func listSessions() {
 		if s.Name == current {
 			prefix = "* "
 		}
-		fmt.Printf("%s%s (pid: %d, cmd: %s)\n", prefix, s.Name, s.PID, s.Command)
+		duration := time.Since(s.StartTime).Round(time.Second)
+		fmt.Printf("%s%s (pid: %d, cmd: %s, up: %s)\n", prefix, s.Name, s.PID, s.Command, duration)
 	}
 }
 

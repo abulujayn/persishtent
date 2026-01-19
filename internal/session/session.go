@@ -30,9 +30,10 @@ const (
 
 // Info holds information about a persistent session
 type Info struct {
-	Name    string `json:"name"`
-	PID     int    `json:"pid"`
-	Command string `json:"command"`
+	Name      string    `json:"name"`
+	PID       int       `json:"pid"`
+	Command   string    `json:"command"`
+	StartTime time.Time `json:"start_time"`
 }
 
 // IsAlive checks if the shell process is still running and the socket is active

@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestEnsureDir(t *testing.T) {
@@ -61,10 +62,12 @@ func TestGetPaths(t *testing.T) {
 
 func TestSessionInfo(t *testing.T) {
 	name := "infotest"
+	now := time.Now().Round(time.Second)
 	info := Info{
-		Name:    name,
-		PID:     12345,
-		Command: "/bin/bash",
+		Name:      name,
+		PID:       12345,
+		Command:   "/bin/bash",
+		StartTime: now,
 	}
 
 	// Ensure dir exists
@@ -95,6 +98,9 @@ func TestSessionInfo(t *testing.T) {
 	}
 	if readInfo.Command != info.Command {
 		t.Errorf("Command mismatch. Got %s, want %s", readInfo.Command, info.Command)
+	}
+	if !readInfo.StartTime.Equal(now) {
+		t.Errorf("StartTime mismatch. Got %v, want %v", readInfo.StartTime, now)
 	}
 }
 
