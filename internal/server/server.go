@@ -21,28 +21,36 @@ type Server struct {
 }
 
 // Run starts the session server. It blocks until the shell process exits.
-func Run(name string, sockPath string) error {
+func Run(name string, sockPath string, customCmd string) error {
 	// 1. Setup Log
 	logPath, err := session.GetLogPath(name)
 	if err != nil {
 		return err
 	}
-	logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0600)
+	logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_TRUNC|os.O_RDWR, 0600)
 	if err != nil {
 		return err
 	}
 	defer logFile.Close()
 
 	// 2. Setup PTY
-	shell := os.Getenv("SHELL")
-	if shell == "" {
-		shell = "bash"
+	execCmd := customCmd
+	if execCmd == "" {
+		execCmd = os.Getenv("SHELL")
+		if execCmd == "" {
+			execCmd = "bash"
+		}
 	}
-	if _, err := exec.LookPath(shell); err != nil {
-		shell = "sh"
+	
+	// Split custom command into args for exec
+	// Simple split by space for now. For complex commands, user should use a shell wrapper.
+	cmdArgs := []string{"-c", execCmd}
+	shellPath := "/bin/sh"
+	if _, err := exec.LookPath("bash"); err == nil {
+		shellPath = "bash"
 	}
 
-	cmd := exec.Command(shell)
+	cmd := exec.Command(shellPath, cmdArgs...)
 	cmd.Env = append(os.Environ(), "TERM=xterm-256color", "PERSISHTENT_SESSION="+name)
 
 	ptmx, err := pty.Start(cmd)
@@ -55,7 +63,7 @@ func Run(name string, sockPath string) error {
 	_ = session.WriteInfo(session.Info{
 		Name:    name,
 		PID:     cmd.Process.Pid,
-		Command: shell,
+		Command: execCmd,
 	})
 
 	// 3. Setup Socket
@@ -79,6 +87,9 @@ func Run(name string, sockPath string) error {
 		Clients: make(map[net.Conn]struct{}),
 	}
 
+	const maxLogSize = 1024 * 1024 // 1MB
+	var logSize int64
+
 	// 4. Output Loop
 	go func() {
 		buf := make([]byte, 4096)
@@ -88,8 +99,23 @@ func Run(name string, sockPath string) error {
 				break
 			}
 			data := buf[:n]
-			if _, err := logFile.Write(data); err != nil {
-				// ignore
+			
+			// Simple log truncation logic: 
+			// If we hit maxLogSize, we reset and keep only the last chunk? 
+			// No, that loses context. 
+			// Better: if file > maxLogSize, truncate the beginning.
+			// But Go doesn't have an easy "truncate head" for files.
+			// Minimal approach: If > maxLogSize, wipe it. 
+			// (User specified "clean and minimal", let's keep it simple for now).
+			if logSize > maxLogSize {
+				_ = logFile.Truncate(0)
+				_, _ = logFile.Seek(0, 0)
+				logSize = 0
+			}
+
+			wn, err := logFile.Write(data)
+			if err == nil {
+				logSize += int64(wn)
 			}
 			srv.broadcast(data)
 		}

@@ -23,7 +23,7 @@ func checkNesting() {
 func main() {
 	if len(os.Args) < 2 {
 		checkNesting()
-		startSession(generateAutoName(), false, "")
+		startSession(generateAutoName(), false, "", "")
 		return
 	}
 
@@ -34,6 +34,7 @@ func main() {
 		startCmd := flag.NewFlagSet("start", flag.ExitOnError)
 		detach := startCmd.Bool("d", false, "Start in detached mode")
 		sock := startCmd.String("s", "", "Custom socket path")
+		command := startCmd.String("c", "", "Custom command to run")
 		startCmd.Parse(os.Args[2:])
 
 		checkNesting()
@@ -43,7 +44,7 @@ func main() {
 		} else {
 			name = generateAutoName()
 		}
-		startSession(name, *detach, *sock)
+		startSession(name, *detach, *sock, *command)
 
 	case "attach", "a":
 		attachCmd := flag.NewFlagSet("attach", flag.ExitOnError)
@@ -77,14 +78,27 @@ func main() {
 
 	case "kill", "k":
 		killCmd := flag.NewFlagSet("kill", flag.ExitOnError)
+		all := killCmd.Bool("a", false, "Kill all sessions")
 		sock := killCmd.String("s", "", "Custom socket path")
 		killCmd.Parse(os.Args[2:])
+
+		if *all {
+			sessions, _ := session.List()
+			for _, s := range sessions {
+				if err := client.Kill(s.Name, ""); err != nil {
+					fmt.Printf("Error killing session '%s': %v\n", s.Name, err)
+				} else {
+					fmt.Printf("Session '%s' killed.\n", s.Name)
+				}
+			}
+			return
+		}
 
 		name := ""
 		if killCmd.NArg() > 0 {
 			name = killCmd.Arg(0)
 		} else {
-			fmt.Println("Usage: persishtent kill [-s socket] <name>")
+			fmt.Println("Usage: persishtent kill [-a] [-s socket] <name>")
 			return
 		}
 
@@ -94,9 +108,21 @@ func main() {
 			fmt.Printf("Session '%s' killed.\n", name)
 		}
 
+	case "rename", "r":
+		if len(os.Args) < 4 {
+			fmt.Println("Usage: persishtent rename <old> <new>")
+			return
+		}
+		if err := session.Rename(os.Args[2], os.Args[3]); err != nil {
+			fmt.Printf("Error renaming session: %v\n", err)
+		} else {
+			fmt.Printf("Session '%s' renamed to '%s'.\n", os.Args[2], os.Args[3])
+		}
+
 	case "daemon": // Internal
 		daemonCmd := flag.NewFlagSet("daemon", flag.ExitOnError)
 		sock := daemonCmd.String("s", "", "Custom socket path")
+		command := daemonCmd.String("c", "", "Custom command")
 		daemonCmd.Parse(os.Args[2:])
 
 		if daemonCmd.NArg() < 1 {
@@ -104,7 +130,7 @@ func main() {
 		}
 		name := daemonCmd.Arg(0)
 		// Daemon runs until shell exits
-		if err := server.Run(name, *sock); err != nil {
+		if err := server.Run(name, *sock, *command); err != nil {
 			os.Exit(1)
 		}
 
@@ -120,7 +146,7 @@ func main() {
 		if _, err := os.Stat(sock); err == nil {
 			attachSession(cmd, "")
 		} else {
-			startSession(cmd, false, "")
+			startSession(cmd, false, "", "")
 		}
 	}
 }
@@ -142,7 +168,7 @@ func generateAutoName() string {
 	}
 }
 
-func startSession(name string, detach bool, sockPath string) {
+func startSession(name string, detach bool, sockPath string, customCmd string) {
 	// 1. Check if already exists
 	checkPath := sockPath
 	if checkPath == "" {
@@ -168,6 +194,9 @@ func startSession(name string, detach bool, sockPath string) {
 	args := []string{"daemon"}
 	if sockPath != "" {
 		args = append(args, "-s", sockPath)
+	}
+	if customCmd != "" {
+		args = append(args, "-c", customCmd)
 	}
 	args = append(args, name)
 
@@ -243,8 +272,12 @@ func printHelp() {
 	fmt.Println("  persishtent start (s) [flags] [name]")
 	fmt.Println("    -d                             Start in detached mode")
 	fmt.Println("    -s <path>                      Custom socket path")
+	fmt.Println("    -c <cmd>                       Custom command to run")
 	fmt.Println("  persishtent attach (a) [-s path] [name]")
-	fmt.Println("  persishtent kill (k) [-s path] <name>")
+	fmt.Println("  persishtent kill (k) [flags] [name]")
+	fmt.Println("    -a                             Kill all sessions")
+	fmt.Println("    -s <path>                      Custom socket path")
+	fmt.Println("  persishtent rename (r) <old> <new>")
 	fmt.Println("")
 	fmt.Println("Shortcuts:")
 	fmt.Println("  Ctrl+D, d                        Detach from session")

@@ -41,6 +41,34 @@ func Cleanup(name string) {
 	_ = os.Remove(filepath.Join(dir, name+".log"))
 }
 
+// Rename moves all session files to a new name
+func Rename(oldName, newName string) error {
+	dir, err := EnsureDir()
+	if err != nil {
+		return err
+	}
+
+	extensions := []string{".sock", ".info", ".log"}
+	for _, ext := range extensions {
+		oldPath := filepath.Join(dir, oldName+ext)
+		newPath := filepath.Join(dir, newName+ext)
+		if _, err := os.Stat(oldPath); err == nil {
+			if err := os.Rename(oldPath, newPath); err != nil {
+				return err
+			}
+		}
+	}
+
+	// Update the name inside the .info file
+	info, err := ReadInfo(newName)
+	if err == nil {
+		info.Name = newName
+		_ = WriteInfo(info)
+	}
+
+	return nil
+}
+
 // GetHomeDir returns the user's home directory
 func GetHomeDir() (string, error) {
 	return os.UserHomeDir()
