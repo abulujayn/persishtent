@@ -41,9 +41,6 @@ func Attach(name string) error {
 	defer func() { _ = term.Restore(int(os.Stdin.Fd()), oldState) }()
 
 	// 3. Replay Log
-	// Clear screen before replay for a clean start
-	_, _ = os.Stdout.Write([]byte("\x1b[H\x1b[2J"))
-
 	logPath, err := session.GetLogPath(name)
 	if err == nil {
 		f, err := os.Open(logPath)

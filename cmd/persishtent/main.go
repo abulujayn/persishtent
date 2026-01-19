@@ -163,6 +163,7 @@ func startSession(name string) {
 }
 
 func attachSession(name string) {
+	fmt.Print("\x1b[H\x1b[2J")
 	fmt.Printf("[attaching to session '%s'. press ctrl+d, d to detach]\n", name)
 	if err := client.Attach(name); err != nil {
 		if err == client.ErrDetached {
