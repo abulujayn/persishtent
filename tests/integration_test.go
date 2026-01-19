@@ -128,5 +128,36 @@ func TestIntegration(t *testing.T) {
 	if _, err := os.Stat(sockPath); err == nil {
 		t.Fatalf("Socket still exists after exit command.")
 	}
+
+	// --- Test Kill Subcommand ---
+	// Start another session
+	killSessionName := "kill-test"
+	killSockPath := filepath.Join(home, ".persishtent", killSessionName+".sock")
+	_ = os.Remove(killSockPath)
+	
+	startKillCmd := exec.Command(binPath, "start", killSessionName)
+	if err := startKillCmd.Start(); err != nil {
+		t.Fatalf("Failed to start kill-test session: %v", err)
+	}
+	
+	time.Sleep(2 * time.Second)
+	
+	// Verify it exists
+	if _, err := os.Stat(killSockPath); os.IsNotExist(err) {
+		t.Fatalf("kill-test session failed to start")
+	}
+	
+	// Kill it using CLI
+	killCmd := exec.Command(binPath, "kill", killSessionName)
+	if out, err := killCmd.CombinedOutput(); err != nil {
+		t.Fatalf("Failed to run kill command: %v, output: %s", err, out)
+	}
+	
+	time.Sleep(1 * time.Second)
+	
+	// Verify it is gone
+	if _, err := os.Stat(killSockPath); err == nil {
+		t.Fatalf("Socket still exists after kill command for %s", killSessionName)
+	}
 }
 

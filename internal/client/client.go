@@ -144,7 +144,7 @@ func Kill(name string) error {
 	}
 	defer conn.Close()
 
-	// Send SIGTERM (15)
-	payload := []byte{byte(syscall.SIGTERM)}
+	// Send SIGKILL (9) to ensure immediate termination
+	payload := []byte{byte(syscall.SIGKILL)}
 	return protocol.WritePacket(conn, protocol.TypeSignal, payload)
 }
