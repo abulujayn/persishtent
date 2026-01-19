@@ -1,7 +1,7 @@
 # Persishtent Plan
 
 ## Goal
-Create a persistent shell proxy layer "persishtent" in Go that supports detach/resume without multiplexing.
+Create a persistent shell proxy layer "persishtent" in Go that supports detach/resume without multiplexing and achieves a native-like feel unlike popular multiplexers.
 
 ## Roadmap
 

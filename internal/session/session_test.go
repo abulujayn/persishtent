@@ -58,3 +58,42 @@ func TestGetPaths(t *testing.T) {
 		t.Errorf("Log filename mismatch. Got %s, want %s.log", filepath.Base(logPath), name)
 	}
 }
+
+func TestSessionInfo(t *testing.T) {
+	name := "infotest"
+	info := Info{
+		Name:    name,
+		PID:     12345,
+		Command: "/bin/bash",
+	}
+
+	// Ensure dir exists
+	if _, err := EnsureDir(); err != nil {
+		t.Fatalf("EnsureDir failed: %v", err)
+	}
+	
+	// Cleanup
+	path, _ := GetInfoPath(name)
+	defer os.Remove(path)
+
+	// Write
+	if err := WriteInfo(info); err != nil {
+		t.Fatalf("WriteInfo failed: %v", err)
+	}
+
+	// Read
+	readInfo, err := ReadInfo(name)
+	if err != nil {
+		t.Fatalf("ReadInfo failed: %v", err)
+	}
+
+	if readInfo.Name != info.Name {
+		t.Errorf("Name mismatch. Got %s, want %s", readInfo.Name, info.Name)
+	}
+	if readInfo.PID != info.PID {
+		t.Errorf("PID mismatch. Got %d, want %d", readInfo.PID, info.PID)
+	}
+	if readInfo.Command != info.Command {
+		t.Errorf("Command mismatch. Got %s, want %s", readInfo.Command, info.Command)
+	}
+}
