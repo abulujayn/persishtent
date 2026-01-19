@@ -30,11 +30,29 @@ func main() {
 		}
 		startSession(name)
 	case "attach", "a":
+		var name string
 		if len(os.Args) < 3 {
-			fmt.Println("Usage: persishtent attach <name>")
-			return
+			sessions, err := session.List()
+			if err != nil {
+				fmt.Printf("Error checking sessions: %v\n", err)
+				return
+			}
+			if len(sessions) == 1 {
+				name = sessions[0]
+			} else if len(sessions) == 0 {
+				fmt.Println("No active sessions.")
+				return
+			} else {
+				fmt.Println("Multiple sessions active. Please specify one:")
+				for _, s := range sessions {
+					fmt.Printf("  %s\n", s)
+				}
+				return
+			}
+		} else {
+			name = os.Args[2]
 		}
-		attachSession(os.Args[2])
+		attachSession(name)
 	case "kill", "k":
 		if len(os.Args) < 3 {
 			fmt.Println("Usage: persishtent kill <name>")
@@ -171,7 +189,7 @@ func printHelp() {
 	fmt.Println("  persishtent <name>               Start or attach to session")
 	fmt.Println("  persishtent list (ls)            List active sessions")
 	fmt.Println("  persishtent start (s) [name]     Start a new session (auto-named s0, s1... if omitted)")
-	fmt.Println("  persishtent attach (a) <name>    Attach to an existing session")
+	fmt.Println("  persishtent attach (a) [name]    Attach to an existing session (auto-selects if only one)")
 	fmt.Println("  persishtent kill (k) <name>      Kill an active session")
 	fmt.Println("")
 	fmt.Println("Shortcuts:")
