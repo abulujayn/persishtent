@@ -178,6 +178,7 @@ func attachSession(name string) {
 }
 
 func listSessions() {
+	current := os.Getenv("PERSISHTENT_SESSION")
 	sessions, err := session.List()
 	if err != nil {
 		fmt.Printf("Error listing sessions: %v\n", err)
@@ -189,7 +190,11 @@ func listSessions() {
 	}
 	fmt.Println("Active sessions:")
 	for _, s := range sessions {
-		fmt.Printf("  %s (pid: %d, cmd: %s)\n", s.Name, s.PID, s.Command)
+		prefix := "  "
+		if s.Name == current {
+			prefix = "* "
+		}
+		fmt.Printf("%s%s (pid: %d, cmd: %s)\n", prefix, s.Name, s.PID, s.Command)
 	}
 }
 
