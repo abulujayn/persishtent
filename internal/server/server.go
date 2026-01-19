@@ -42,7 +42,7 @@ func Run(name string) error {
 	}
 
 	cmd := exec.Command(shell)
-	cmd.Env = append(os.Environ(), "TERM=xterm-256color")
+	cmd.Env = append(os.Environ(), "TERM=xterm-256color", "PERSISHTENT_SESSION="+name)
 
 	ptmx, err := pty.Start(cmd)
 	if err != nil {

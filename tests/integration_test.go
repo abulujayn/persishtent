@@ -1,6 +1,7 @@
 package tests
 
 import (
+	"bytes"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -158,6 +159,17 @@ func TestIntegration(t *testing.T) {
 	// Verify it is gone
 	if _, err := os.Stat(killSockPath); err == nil {
 		t.Fatalf("Socket still exists after kill command for %s", killSessionName)
+	}
+
+	// --- Test Nesting Protection ---
+	nestCmd := exec.Command(binPath, "list")
+	nestCmd.Env = append(os.Environ(), "PERSISHTENT_SESSION=fake")
+	out, err := nestCmd.CombinedOutput()
+	if err == nil {
+		t.Fatalf("Expected error when nesting sessions, but got none. Output: %s", out)
+	}
+	if !bytes.Contains(out, []byte("already inside a persishtent session")) {
+		t.Fatalf("Unexpected error message for nesting protection: %s", out)
 	}
 }
 

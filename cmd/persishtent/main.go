@@ -13,6 +13,11 @@ import (
 )
 
 func main() {
+	if os.Getenv("PERSISHTENT_SESSION") != "" {
+		fmt.Printf("[error: already inside a persishtent session (%s)]\n", os.Getenv("PERSISHTENT_SESSION"))
+		os.Exit(1)
+	}
+
 	if len(os.Args) < 2 {
 		startSession(generateAutoName())
 		return
