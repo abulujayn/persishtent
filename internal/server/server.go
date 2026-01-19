@@ -50,6 +50,13 @@ func Run(name string) error {
 	}
 	defer func() { _ = ptmx.Close() }()
 
+	// 2.5 Write Info
+	_ = session.WriteInfo(session.Info{
+		Name:    name,
+		PID:     cmd.Process.Pid,
+		Command: shell,
+	})
+
 	// 3. Setup Socket
 	sockPath, err := session.GetSocketPath(name)
 	if err != nil {
@@ -100,6 +107,8 @@ func Run(name string) error {
 	// 6. Wait
 	err = cmd.Wait()
 	_ = os.Remove(sockPath)
+	infoPath, _ := session.GetInfoPath(name)
+	_ = os.Remove(infoPath)
 	return err
 }
 

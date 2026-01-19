@@ -38,14 +38,14 @@ func main() {
 				return
 			}
 			if len(sessions) == 1 {
-				name = sessions[0]
+				name = sessions[0].Name
 			} else if len(sessions) == 0 {
 				fmt.Println("No active sessions.")
 				return
 			} else {
 				fmt.Println("Multiple sessions active. Please specify one:")
 				for _, s := range sessions {
-					fmt.Printf("  %s\n", s)
+					fmt.Printf("  %s (pid: %d, cmd: %s)\n", s.Name, s.PID, s.Command)
 				}
 				return
 			}
@@ -93,7 +93,7 @@ func generateAutoName() string {
 	sessions, _ := session.List()
 	used := make(map[string]bool)
 	for _, s := range sessions {
-		used[s] = true
+		used[s.Name] = true
 	}
 
 	i := 0
@@ -178,7 +178,7 @@ func listSessions() {
 	}
 	fmt.Println("Active sessions:")
 	for _, s := range sessions {
-		fmt.Printf("  %s\n", s)
+		fmt.Printf("  %s (pid: %d, cmd: %s)\n", s.Name, s.PID, s.Command)
 	}
 }
 
