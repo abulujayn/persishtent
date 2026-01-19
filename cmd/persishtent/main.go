@@ -21,19 +21,19 @@ func main() {
 	cmd := os.Args[1]
 
 	switch cmd {
-	case "start":
+	case "start", "s":
 		if len(os.Args) < 3 {
 			fmt.Println("Usage: persishtent start <name>")
 			return
 		}
 		startSession(os.Args[2])
-	case "attach":
+	case "attach", "a":
 		if len(os.Args) < 3 {
 			fmt.Println("Usage: persishtent attach <name>")
 			return
 		}
 		attachSession(os.Args[2])
-	case "kill":
+	case "kill", "k":
 		if len(os.Args) < 3 {
 			fmt.Println("Usage: persishtent kill <name>")
 			return
@@ -51,7 +51,7 @@ func main() {
 		if err := server.Run(os.Args[2]); err != nil {
 			os.Exit(1)
 		}
-	case "list":
+	case "list", "ls":
 		listSessions()
 	case "help":
 		printHelp()
@@ -148,13 +148,13 @@ func listSessions() {
 func printHelp() {
 	fmt.Println("persishtent - persistent shell proxy")
 	fmt.Println("Usage:")
-	fmt.Println("  persishtent <name>         Start or attach to session")
-	fmt.Println("  persishtent list           List active sessions")
-	fmt.Println("  persishtent start <name>   Start a new session")
-	fmt.Println("  persishtent attach <name>  Attach to an existing session")
-	fmt.Println("  persishtent kill <name>    Kill an active session")
+	fmt.Println("  persishtent <name>               Start or attach to session")
+	fmt.Println("  persishtent list (ls)            List active sessions")
+	fmt.Println("  persishtent start (s) <name>     Start a new session")
+	fmt.Println("  persishtent attach (a) <name>    Attach to an existing session")
+	fmt.Println("  persishtent kill (k) <name>      Kill an active session")
 	fmt.Println("")
 	fmt.Println("Shortcuts:")
-	fmt.Println("  Ctrl+D, d                  Detach from session")
-	fmt.Println("  Ctrl+D, Ctrl+D             Send Ctrl+D to session")
+	fmt.Println("  Ctrl+D, d                        Detach from session")
+	fmt.Println("  Ctrl+D, Ctrl+D                   Send Ctrl+D to session")
 }
