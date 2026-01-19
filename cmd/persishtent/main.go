@@ -125,7 +125,7 @@ func attachSession(name string) {
 			fmt.Printf("[error attaching to '%s': %v]\n", name, err)
 		}
 	} else {
-		fmt.Println("\n[session terminated]")
+		fmt.Println("\n[terminated]")
 	}
 }
 
