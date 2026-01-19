@@ -80,6 +80,7 @@ func Run(name string, sockPath string, customCmd string) error {
 		return err
 	}
 	defer l.Close()
+	_ = os.Chmod(sockPath, 0600)
 
 	srv := &Server{
 		Name:    name,
