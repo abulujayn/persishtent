@@ -1,0 +1,60 @@
+package session
+
+import (
+	"os"
+	"path/filepath"
+	"testing"
+)
+
+func TestEnsureDir(t *testing.T) {
+	// We can't easily mock UserHomeDir without internal changes or env var hacking,
+	// but we can check if it returns a path that exists.
+	// Actually, we can assume os.UserHomeDir works on linux.
+	
+	path, err := EnsureDir()
+	if err != nil {
+		t.Fatalf("EnsureDir failed: %v", err)
+	}
+	
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("Directory does not exist: %v", err)
+	}
+	if !info.IsDir() {
+		t.Fatalf("Path is not a directory: %s", path)
+	}
+	
+	// Cleanup if it's a test environment? 
+	// Ideally we don't want to clutter the real home dir, 
+	// but since we are in a dev environment, it's acceptable to use the real path 
+	// provided we don't destroy anything important.
+}
+
+func TestGetPaths(t *testing.T) {
+	name := "testsession"
+	
+	sockPath, err := GetSocketPath(name)
+	if err != nil {
+		t.Fatalf("GetSocketPath failed: %v", err)
+	}
+	
+	logPath, err := GetLogPath(name)
+	if err != nil {
+		t.Fatalf("GetLogPath failed: %v", err)
+	}
+	
+	home, _ := os.UserHomeDir()
+	expectedDir := filepath.Join(home, DirName)
+	
+	if filepath.Dir(sockPath) != expectedDir {
+		t.Errorf("Socket path dir mismatch. Got %s, want %s", filepath.Dir(sockPath), expectedDir)
+	}
+	
+	if filepath.Base(sockPath) != name + ".sock" {
+		t.Errorf("Socket filename mismatch. Got %s, want %s.sock", filepath.Base(sockPath), name)
+	}
+
+	if filepath.Base(logPath) != name + ".log" {
+		t.Errorf("Log filename mismatch. Got %s, want %s.log", filepath.Base(logPath), name)
+	}
+}
