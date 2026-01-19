@@ -11,6 +11,7 @@ const (
 	TypeData   Type = 0x01
 	TypeResize Type = 0x02
 	TypeSignal Type = 0x03
+	TypeKick   Type = 0x04
 )
 
 // WritePacket writes a typed packet with a payload to the writer.

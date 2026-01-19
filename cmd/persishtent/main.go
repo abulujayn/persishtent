@@ -242,6 +242,8 @@ func attachSession(name string, sockPath string) {
 	if err := client.Attach(name, sockPath); err != nil {
 		if err == client.ErrDetached {
 			fmt.Println("\n[detached]")
+		} else if err == client.ErrKicked {
+			fmt.Println("\n[detached by another connection]")
 		} else {
 			fmt.Printf("[error attaching to '%s': %v]\n", name, err)
 		}

@@ -17,6 +17,7 @@ import (
 )
 
 var ErrDetached = errors.New("detached")
+var ErrKicked = errors.New("kicked by another session")
 
 // Attach connects to an existing session
 func Attach(name string, sockPath string) error {
@@ -161,6 +162,10 @@ DrainLoop:
 		}
 		if t == protocol.TypeData {
 			_, _ = os.Stdout.Write(payload)
+		} else if t == protocol.TypeKick {
+			// Restore terminal state
+			_, _ = os.Stdout.Write([]byte("\x1b[?1049l\x1b[H\x1b[2J"))
+			return ErrKicked
 		}
 	}
 }

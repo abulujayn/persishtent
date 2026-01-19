@@ -164,6 +164,12 @@ func (s *Server) broadcast(data []byte) {
 
 func (s *Server) handleClient(conn net.Conn, ptmx *os.File) {
 	s.Lock.Lock()
+	// Kick existing clients
+	for c := range s.Clients {
+		_ = protocol.WritePacket(c, protocol.TypeKick, nil)
+		c.Close()
+		delete(s.Clients, c)
+	}
 	s.Clients[conn] = struct{}{}
 	s.Lock.Unlock()
 
