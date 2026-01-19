@@ -14,7 +14,7 @@ import (
 
 func main() {
 	if len(os.Args) < 2 {
-		listSessions()
+		startSession(generateAutoName())
 		return
 	}
 
@@ -167,6 +167,7 @@ func listSessions() {
 func printHelp() {
 	fmt.Println("persishtent - persistent shell proxy")
 	fmt.Println("Usage:")
+	fmt.Println("  persishtent                      Start a new auto-named session")
 	fmt.Println("  persishtent <name>               Start or attach to session")
 	fmt.Println("  persishtent list (ls)            List active sessions")
 	fmt.Println("  persishtent start (s) [name]     Start a new session (auto-named s0, s1... if omitted)")
