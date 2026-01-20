@@ -130,9 +130,16 @@ func Run(name string, sockPath string, logPath string, customCmd string) error {
 			data := buf[:n]
 			
 			if logSize > maxLogSize {
-				_ = logFile.Truncate(0)
-				_, _ = logFile.Seek(0, 0)
-				logSize = 0
+				_ = logFile.Close()
+				_ = os.Rename(logPath, logPath+".1")
+				newFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_TRUNC|os.O_RDWR, 0600)
+				if err == nil {
+					logFile = newFile
+					logSize = 0
+				} else {
+					// Fallback: try to reopen original if rename failed or something
+					logFile, _ = os.OpenFile(logPath, os.O_CREATE|os.O_APPEND|os.O_RDWR, 0600)
+				}
 			}
 
 			wn, err := logFile.Write(data)
@@ -202,21 +209,23 @@ func (s *Server) handleClient(conn net.Conn, ptmx *os.File) {
 
 	s.Lock.Lock()
 
-	if !isReadOnly {
+		if !isReadOnly {
 
-		// New Master client: kick existing Master
+			// New Master client: kick existing Master
 
-		if s.Master != nil {
+			if s.Master != nil {
 
-			_ = protocol.WritePacket(s.Master, protocol.TypeKick, nil)
+				_ = protocol.WritePacket(s.Master, protocol.TypeKick, nil)
 
-			// Connection will be removed by its own goroutine
+				_ = s.Master.Close()
+
+			}
+
+			s.Master = conn
 
 		}
 
-		s.Master = conn
-
-	}
+	
 
 	s.Clients[conn] = struct{}{}
 

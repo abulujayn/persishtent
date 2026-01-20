@@ -59,31 +59,40 @@ func Attach(name string, sockPath string, replay bool, readOnly bool, tail int) 
 	}
 	defer func() { _ = term.Restore(int(os.Stdin.Fd()), oldState) }()
 
-	// 3. Replay Log
-	if replay {
-		// Use info to find correct log path if custom
-		info, err := session.ReadInfo(name)
-		logPath := ""
-		if err == nil && info.LogPath != "" {
-			logPath = info.LogPath
-		} else {
-			logPath, _ = session.GetLogPath(name)
+		// 3. Replay Log
+		if replay {
+			// Use info to find correct log path if custom
+			info, err := session.ReadInfo(name)
+			logPath := ""
+			if err == nil && info.LogPath != "" {
+				logPath = info.LogPath
+			} else {
+				logPath, _ = session.GetLogPath(name)
+			}
+	
+			if logPath != "" {
+				// Read rotated log first
+				rotatedPath := logPath + ".1"
+				if rf, err := os.Open(rotatedPath); err == nil {
+					if tail > 0 {
+						replayTail(os.Stdout, rf, tail)
+					} else {
+						_, _ = io.Copy(os.Stdout, rf)
+					}
+					_ = rf.Close()
+				}
+	
+				if f, err := os.Open(logPath); err == nil {
+					if tail > 0 {
+						replayTail(os.Stdout, f, tail)
+					} else {
+						_, _ = io.Copy(os.Stdout, f)
+					}
+					_ = f.Close()
+				}
+			}
 		}
-
-		        if logPath != "" {
-		            f, err := os.Open(logPath)
-		            if err == nil {
-		                if tail > 0 {
-		                    replayTail(os.Stdout, f, tail)
-		                } else {
-		                    _, _ = io.Copy(os.Stdout, f)
-		                }
-		                _ = f.Close()
-		            }
-		        }
-		    }
-		
-		    // 4. Sync Terminal (Drain responses)
+			    // 4. Sync Terminal (Drain responses)
 		    // Send Device Status Report (DSR) request.
 		    _, _ = os.Stdout.Write([]byte("\x1b[6n"))
 		

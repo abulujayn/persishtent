@@ -78,6 +78,7 @@ func Cleanup(name string) {
 	_ = os.Remove(filepath.Join(dir, name+".sock"))
 	_ = os.Remove(filepath.Join(dir, name+".info"))
 	_ = os.Remove(filepath.Join(dir, name+".log"))
+	_ = os.Remove(filepath.Join(dir, name+".log.1"))
 	_ = os.Remove(filepath.Join(dir, name+".ssh_auth_sock"))
 }
 
