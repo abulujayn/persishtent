@@ -3,7 +3,6 @@ package client
 import (
 	"bytes"
 	"errors"
-	"fmt"
 	"io"
 	"net"
 	"os"
@@ -60,57 +59,37 @@ func Attach(name string, sockPath string, replay bool, readOnly bool, tail int) 
 	}
 	defer func() { _ = term.Restore(int(os.Stdin.Fd()), oldState) }()
 
-		// 3. Replay Log
-		if replay {
-			// Use info to find correct log path if custom
-			info, err := session.ReadInfo(name)
-			logPath := ""
-			if err == nil && info.LogPath != "" {
-				logPath = info.LogPath
-			} else {
-				logPath, _ = session.GetLogPath(name)
-			}
-	
-					if logPath != "" {
-	
-						// Read rotated logs oldest to newest
-	
-						for i := session.MaxLogRotations; i >= 1; i-- {
-	
-							rotatedPath := fmt.Sprintf("%s.%d", logPath, i)
-	
-							if rf, err := os.Open(rotatedPath); err == nil {
-	
-								if tail > 0 {
-	
-									replayTail(os.Stdout, rf, tail)
-	
-								} else {
-	
-									_, _ = io.Copy(os.Stdout, rf)
-	
-								}
-	
-								_ = rf.Close()
-	
-							}
-	
+			// 3. Replay Log
+
+			if replay {
+
+				logFiles, _ := session.GetLogFiles(name)
+
+				for _, lp := range logFiles {
+
+					f, err := os.Open(lp)
+
+					if err == nil {
+
+						if tail > 0 {
+
+							replayTail(os.Stdout, f, tail)
+
+						} else {
+
+							_, _ = io.Copy(os.Stdout, f)
+
 						}
-	
-			
-	
-						if f, err := os.Open(logPath); err == nil {
-	
-			
-					if tail > 0 {
-						replayTail(os.Stdout, f, tail)
-					} else {
-						_, _ = io.Copy(os.Stdout, f)
+
+						_ = f.Close()
+
 					}
-					_ = f.Close()
+
 				}
+
 			}
-		}
+
+		
 			    // 4. Sync Terminal (Drain responses)
 		    // Send Device Status Report (DSR) request.
 		    _, _ = os.Stdout.Write([]byte("\x1b[6n"))

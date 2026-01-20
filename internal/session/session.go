@@ -7,6 +7,8 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
+	"strconv"
 	"syscall"
 	"time"
 )
@@ -78,11 +80,63 @@ func Cleanup(name string) {
 	dir, _ := EnsureDir()
 	_ = os.Remove(filepath.Join(dir, name+".sock"))
 	_ = os.Remove(filepath.Join(dir, name+".info"))
-	_ = os.Remove(filepath.Join(dir, name+".log"))
-	for i := 1; i <= MaxLogRotations; i++ {
-		_ = os.Remove(filepath.Join(dir, fmt.Sprintf("%s.log.%d", name, i)))
-	}
 	_ = os.Remove(filepath.Join(dir, name+".ssh_auth_sock"))
+	
+	// Remove all .log and .log.N files
+	files, _ := os.ReadDir(dir)
+	for _, f := range files {
+		if f.Name() == name+".log" || (len(f.Name()) > len(name)+5 && f.Name()[:len(name)+5] == name+".log.") {
+			_ = os.Remove(filepath.Join(dir, f.Name()))
+		}
+	}
+}
+
+// GetLogFiles returns a sorted list of all log files for a session (oldest to newest)
+func GetLogFiles(name string) ([]string, error) {
+	dir, err := EnsureDir()
+	if err != nil {
+		return nil, err
+	}
+	
+	files, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, err
+	}
+
+	type logEntry struct {
+		path  string
+		index int
+	}
+	var rotated []logEntry
+
+	activeLog := filepath.Join(dir, name+".log")
+
+	prefix := name + ".log."
+	for _, f := range files {
+		if len(f.Name()) > len(prefix) && f.Name()[:len(prefix)] == prefix {
+			idx, err := strconv.Atoi(f.Name()[len(prefix):])
+			if err == nil {
+				rotated = append(rotated, logEntry{filepath.Join(dir, f.Name()), idx})
+			}
+		}
+	}
+
+	// Sort by index (ascending = oldest to newest in this scheme)
+	sort.Slice(rotated, func(i, j int) bool {
+		return rotated[i].index < rotated[j].index
+	})
+
+	var result []string
+	for _, lf := range rotated {
+		result = append(result, lf.path)
+	}
+	
+	// Active log is always newest
+	if _, err := os.Stat(activeLog); err == nil {
+		result = append(result, activeLog)
+	}
+
+	return result, nil
 }
 
 // Rename moves all session files to a new name

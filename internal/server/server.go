@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"strconv"
 	"sync"
 	"syscall"
 	"time"
@@ -132,14 +133,29 @@ func Run(name string, sockPath string, logPath string, customCmd string) error {
 			
 			if logSize > maxLogSize {
 				_ = logFile.Close()
-				// Shift existing rotations
-				for i := session.MaxLogRotations - 1; i >= 1; i-- {
-					oldR := fmt.Sprintf("%s.%d", logPath, i)
-					newR := fmt.Sprintf("%s.%d", logPath, i+1)
-					_ = os.Rename(oldR, newR)
-				}
-				_ = os.Rename(logPath, logPath+".1")
 				
+				// Find highest index
+				files, _ := session.GetLogFiles(name)
+				maxIdx := 0
+				prefix := logPath + "."
+				for _, f := range files {
+					if len(f) > len(prefix) {
+						idx, _ := strconv.Atoi(f[len(prefix):])
+						if idx > maxIdx {
+							maxIdx = idx
+						}
+					}
+				}
+
+				nextIdx := maxIdx + 1
+				_ = os.Rename(logPath, fmt.Sprintf("%s.%d", logPath, nextIdx))
+				
+				// Cleanup old rotations if limit exceeded
+				if len(files) >= session.MaxLogRotations {
+					// files[0] is the oldest
+					_ = os.Remove(files[0])
+				}
+
 				newFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_TRUNC|os.O_RDWR, 0600)
 				if err == nil {
 					logFile = newFile

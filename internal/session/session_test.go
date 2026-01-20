@@ -149,8 +149,78 @@ func TestIsAliveEdgeCases(t *testing.T) {
 		t.Errorf("Expected IsAlive to be false for PID -1")
 	}
 
-	info = Info{Name: "nosock", PID: os.Getpid()}
-	if info.IsAlive() {
-		t.Errorf("Expected IsAlive to be false when socket is missing")
+		info = Info{Name: "nosock", PID: os.Getpid()}
+
+		if info.IsAlive() {
+
+			t.Errorf("Expected IsAlive to be false when socket is missing")
+
+		}
+
 	}
-}
+
+	
+
+	func TestGetLogFiles(t *testing.T) {
+
+		name := "logtest"
+
+		Cleanup(name)
+
+		defer Cleanup(name)
+
+	
+
+		dir, _ := EnsureDir()
+
+		// Create some files out of order
+
+		_ = os.WriteFile(filepath.Join(dir, name+".log.10"), []byte("10"), 0600)
+
+		_ = os.WriteFile(filepath.Join(dir, name+".log.2"), []byte("2"), 0600)
+
+		_ = os.WriteFile(filepath.Join(dir, name+".log"), []byte("active"), 0600)
+
+	
+
+		files, err := GetLogFiles(name)
+
+		if err != nil {
+
+			t.Fatal(err)
+
+		}
+
+	
+
+		if len(files) != 3 {
+
+			t.Fatalf("Expected 3 files, got %d", len(files))
+
+		}
+
+	
+
+		// Expected order: .log.2, .log.10, .log
+
+		if filepath.Base(files[0]) != name+".log.2" {
+
+			t.Errorf("Expected oldest to be .log.2, got %s", filepath.Base(files[0]))
+
+		}
+
+		if filepath.Base(files[1]) != name+".log.10" {
+
+			t.Errorf("Expected second oldest to be .log.10, got %s", filepath.Base(files[1]))
+
+		}
+
+		if filepath.Base(files[2]) != name+".log" {
+
+			t.Errorf("Expected newest to be .log, got %s", filepath.Base(files[2]))
+
+		}
+
+	}
+
+	
