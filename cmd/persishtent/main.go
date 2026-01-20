@@ -193,7 +193,7 @@ func generateAutoName() string {
 
 	i := 0
 	for {
-		name := fmt.Sprintf("s%d", i)
+		name := fmt.Sprintf("%d", i)
 		if !used[name] {
 			return name
 		}
