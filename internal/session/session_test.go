@@ -1,6 +1,8 @@
 package session
 
 import (
+	"encoding/json"
+	"net"
 	"os"
 	"path/filepath"
 	"testing"
@@ -8,6 +10,9 @@ import (
 )
 
 func TestEnsureDir(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
 	path, err := EnsureDir()
 	if err != nil {
 		t.Fatalf("EnsureDir failed: %v", err)
@@ -23,6 +28,9 @@ func TestEnsureDir(t *testing.T) {
 }
 
 func TestGetPaths(t *testing.T) {
+	fakeHome := t.TempDir()
+	t.Setenv("HOME", fakeHome)
+
 	name := "testsession"
 
 	sockPath, err := GetSocketPath(name)
@@ -52,6 +60,9 @@ func TestGetPaths(t *testing.T) {
 }
 
 func TestSessionInfo(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
 	name := "infotest"
 	now := time.Now().Round(time.Second)
 	info := Info{
@@ -109,6 +120,9 @@ func TestValidateName(t *testing.T) {
 }
 
 func TestSessionRename(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
 	oldName := "old-session"
 	newName := "new-session"
 
@@ -156,6 +170,9 @@ func TestIsAliveEdgeCases(t *testing.T) {
 }
 
 func TestGetLogFiles(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
 	name := "logtest"
 	Cleanup(name)
 	defer Cleanup(name)
@@ -188,6 +205,10 @@ func TestGetLogFiles(t *testing.T) {
 }
 
 func TestClean(t *testing.T) {
+	// Isolate test by using a temp home directory
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
 	name := "cleantest"
 	Cleanup(name)
 	defer Cleanup(name)
@@ -206,13 +227,48 @@ func TestClean(t *testing.T) {
 	_ = os.WriteFile(otherFile, []byte("keep"), 0600)
 	defer func() { _ = os.Remove(otherFile) }()
 
-	_, count, err := Clean()
+	// Create a "valid" session info file that should be preserved and returned
+	activeName := "active_session"
+	// We need it to be "alive". This is tricky without a real process.
+	// But Clean() uses ReadInfo then IsAlive().
+	// IsAlive checks PID and socket.
+	// We can mock this by using the current process PID and creating a listening socket.
+	
+	// Create socket for active session
+	activeSock := filepath.Join(dir, activeName+".sock")
+	l, err := net.Listen("unix", activeSock)
+	if err != nil {
+		t.Fatalf("Failed to create mock socket: %v", err)
+	}
+	defer l.Close()
+	
+	activeInfo := Info{
+		Name: activeName,
+		PID:  os.Getpid(), // Use our own PID so it's "alive"
+	}
+	activeInfoBytes, _ := json.Marshal(activeInfo)
+	_ = os.WriteFile(filepath.Join(dir, activeName+".info"), activeInfoBytes, 0600)
+	defer Cleanup(activeName)
+
+	sessions, count, err := Clean()
 	if err != nil {
 		t.Fatalf("Clean failed: %v", err)
 	}
 
 	if count < 5 {
 		t.Errorf("Expected at least 5 files to be cleaned, got %d", count)
+	}
+	
+	if len(sessions) != 1 {
+		var names []string
+		for _, s := range sessions {
+			names = append(names, s.Name)
+		}
+		t.Errorf("Expected 1 active session, got %d: %v", len(sessions), names)
+	} else {
+		if sessions[0].Name != activeName {
+			t.Errorf("Expected session name %s, got %s", activeName, sessions[0].Name)
+		}
 	}
 
 	// Verify files are gone
