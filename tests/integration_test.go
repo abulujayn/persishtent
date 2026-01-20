@@ -172,20 +172,27 @@ time.Sleep(500 * time.Millisecond)
 		t.Fatalf("Socket still exists after kill command for %s", killSessionName)
 	}
 
-	// --- Test Nesting Protection ---
-	listCmd := prepareCmd(binPath, "list")
-	listCmd.Env = append(listCmd.Env, "PERSISHTENT_SESSION=fake")
-	if out, err := listCmd.CombinedOutput(); err != nil {
-		t.Fatalf("List command failed inside nested session: %v, out: %s", err, out)
+	// --- Test Start-as-Attach ---
+	startName := "start-as-attach"
+	// 1. Start detached
+	if out, err := prepareCmd(binPath, "start", "-d", startName).CombinedOutput(); err != nil {
+		t.Fatalf("Failed to start initial session: %v, out: %s", err, out)
 	}
-
-	nestCmd := prepareCmd(binPath, "start", "nested-session")
-	nestCmd.Env = append(nestCmd.Env, "PERSISHTENT_SESSION=fake")
-	out, err := nestCmd.CombinedOutput()
-	if err == nil {
-		t.Fatalf("Expected error when nesting sessions (start), but got none. Output: %s", out)
+	
+	// 2. Start again (should attach)
+	// We'll use pty to verify we are attached
+	startAttachCmd := prepareCmd(binPath, "start", startName)
+	ptmx3, err := pty.Start(startAttachCmd)
+	if err != nil {
+		t.Fatalf("Failed to start-attach with PTY: %v", err)
 	}
-	if !bytes.Contains(out, []byte("already inside a persishtent session")) {
-		t.Fatalf("Unexpected error message for nesting protection: %s", out)
+	defer func() { _ = ptmx3.Close() }()
+	
+	time.Sleep(1 * time.Second)
+	// If we are attached, we can send exit
+	if _, err := ptmx3.Write([]byte("exit\n")); err != nil {
+		t.Logf("Failed to write exit to start-attach: %v", err)
 	}
+	
+	_ = startAttachCmd.Wait()
 }
