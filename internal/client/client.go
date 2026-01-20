@@ -114,7 +114,9 @@ func Attach(name string, sockPath string, replay bool, readOnly bool, tail int) 
 		
 		    // Drain Phase
 		    var drainBuf []byte
-		    timeout := time.After(250 * time.Millisecond)
+		    deadline := time.After(1000 * time.Millisecond)
+		    inactivity := time.NewTimer(250 * time.Millisecond)
+		    defer inactivity.Stop()
 		
 		    var pendingCtrlD bool
 		    var detached int32
@@ -129,63 +131,61 @@ func Attach(name string, sockPath string, replay bool, readOnly bool, tail int) 
 		            drainBuf = append(drainBuf, chunk...)
 		
 		            for {
-		                // Look for terminal responses: ESC [ ... R (CPR) or ESC [ ... c (DA)
-		                idxR := bytes.IndexByte(drainBuf, 'R')
-		                idxC := bytes.IndexByte(drainBuf, 'c')
-		
-		                idx := -1
-		                if idxR >= 0 && (idxC < 0 || idxR < idxC) {
-		                    idx = idxR
-		                } else if idxC >= 0 {
-		                    idx = idxC
+		                seqLen := matchTerminalResponse(drainBuf)
+		                if seqLen <= 0 {
+		                    break
 		                }
 		
-		                if idx >= 0 {
-		                    // Check if it's an escape sequence ESC [
-		                    if escIdx := bytes.LastIndex(drainBuf[:idx], []byte("\x1b[")); escIdx >= 0 {
-		                        // 1. Forward everything BEFORE the escape sequence
-		                        if escIdx > 0 {
-		                            if err := processInput(conn, drainBuf[:escIdx], &pendingCtrlD, &detached, readOnly); err != nil {
-		                                return nil
-		                            }
-		                        }
-		
-		                        // 2. Check if it's our CPR sentinel
-		                        isCPR := (drainBuf[idx] == 'R')
-		
-		                        // 3. Swallow the response and continue
-		                        drainBuf = drainBuf[idx+1:]
-		                        if isCPR {
-		                            // Stop draining once we hit our sentinel
-		                            if len(drainBuf) > 0 {
-		                                if err := processInput(conn, drainBuf, &pendingCtrlD, &detached, readOnly); err != nil {
-		                                    return nil
-		                                }
-		                            }
-		                            break DrainLoop
-		                        }
-		                        continue
+		                // Found a response!
+		                // 1. Forward anything BEFORE the sequence (unlikely but possible)
+		                escIdx := bytes.Index(drainBuf, []byte("\x1b"))
+		                if escIdx > 0 {
+		                    if err := processInput(conn, drainBuf[:escIdx], &pendingCtrlD, &detached, readOnly); err != nil {
+		                        return nil
 		                    }
 		                }
-		                // No more identifiable terminal responses in current buffer
-		                break
+		
+		                // 2. Swallow the sequence
+		                drainBuf = drainBuf[escIdx+seqLen:]
+		
+		                // Reset inactivity timer
+		                if !inactivity.Stop() {
+		                    select {
+		                    case <-inactivity.C:
+		                    default:
+		                    }
+		                }
+		                inactivity.Reset(100 * time.Millisecond)
 		            }
 		
-		            // Safety limit: if buffer grows too large without a sentinel, flush and stop
-		            if len(drainBuf) > 2048 {
+		            // If we have data that is definitely NOT part of an escape sequence,
+		            // we can forward it.
+		            if len(drainBuf) > 0 && !bytes.Contains(drainBuf, []byte("\x1b")) {
 		                if err := processInput(conn, drainBuf, &pendingCtrlD, &detached, readOnly); err != nil {
 		                    return nil
 		                }
+		                drainBuf = nil
+		            }
+		
+		            // Safety limit
+		            if len(drainBuf) > 4096 {
+		                if err := processInput(conn, drainBuf, &pendingCtrlD, &detached, readOnly); err != nil {
+		                    return nil
+		                }
+		                drainBuf = nil
 		                break DrainLoop
 		            }
-		        case <-timeout:
-		            // Timeout: Assume no CPR coming, process everything buffered
-		            if len(drainBuf) > 0 {
-		                if err := processInput(conn, drainBuf, &pendingCtrlD, &detached, readOnly); err != nil {
-		                    return nil
-		                }
-		            }
+		        case <-inactivity.C:
 		            break DrainLoop
+		        case <-deadline:
+		            break DrainLoop
+		        }
+		    }
+		
+		    // Flush remaining
+		    if len(drainBuf) > 0 {
+		        if err := processInput(conn, drainBuf, &pendingCtrlD, &detached, readOnly); err != nil {
+		            return nil
 		        }
 		    }
 		
@@ -387,6 +387,50 @@ func processInput(conn net.Conn, data []byte, pendingCtrlD *bool, detached *int3
 		}
 	}
 	return nil
+}
+
+// matchTerminalResponse returns the length of the first terminal response sequence
+// starting at the first ESC in data. Returns 0 if no complete response is found.
+func matchTerminalResponse(data []byte) int {
+	escIdx := bytes.Index(data, []byte("\x1b"))
+	if escIdx < 0 {
+		return 0
+	}
+	remaining := data[escIdx:]
+	if len(remaining) < 2 {
+		return 0
+	}
+
+	switch remaining[1] {
+	case '[': // CSI
+		for i := 2; i < len(remaining); i++ {
+			b := remaining[i]
+			if b >= 0x40 && b <= 0x7E {
+				return i + 1
+			}
+		}
+	case ']': // OSC
+		// OSC sequences end with BEL (0x07) or ST (ESC \)
+		for i := 2; i < len(remaining); i++ {
+			if remaining[i] == 0x07 {
+				return i + 1
+			}
+			if remaining[i] == '\\' && remaining[i-1] == 0x1b {
+				return i + 1
+			}
+		}
+	case 'P', '_', '^', 'k': // DCS, APC, PM, Title
+		// These typically end with ST (ESC \)
+		for i := 2; i < len(remaining); i++ {
+			if remaining[i] == '\\' && remaining[i-1] == 0x1b {
+				return i + 1
+			}
+		}
+	default:
+		// Other ESC sequences are usually 2 bytes
+		return 2
+	}
+	return 0
 }
 
 func sendResize(conn net.Conn) {
