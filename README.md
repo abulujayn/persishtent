@@ -29,6 +29,20 @@ To run the linter, you'll need `golangci-lint` installed. Run the following comm
 golangci-lint run
 ```
 
+## Testing
+
+To run the tests, use:
+
+```bash
+go test -v ./...
+```
+
+To run tests with the race detector enabled:
+
+```bash
+go test -v -race ./...
+```
+
 ## Usage
 
 ### Commands
