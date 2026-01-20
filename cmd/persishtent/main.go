@@ -22,7 +22,7 @@ func checkNesting() {
 
 func main() {
 	// Auto-prune stale sessions on every invocation
-	sessions, _ := session.List()
+	sessions, _, _ := session.Clean()
 
 	if len(os.Args) < 2 {
 		checkNesting()
@@ -163,7 +163,7 @@ func main() {
 	case "list", "ls":
 		listSessions()
 	case "clean":
-		count, err := session.Clean()
+		_, count, err := session.Clean()
 		if err != nil {
 			fmt.Printf("Error cleaning sessions: %v\n", err)
 		} else {

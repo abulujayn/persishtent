@@ -240,26 +240,28 @@ func ReadInfo(name string) (Info, error) {
 	return info, err
 }
 
-// Clean removes all stale sessions and orphaned files
-func Clean() (int, error) {
+// Clean removes all stale sessions and orphaned files, returning active sessions and count of removed files
+func Clean() ([]Info, int, error) {
 	dir, err := EnsureDir()
 	if err != nil {
-		return 0, err
+		return nil, 0, err
 	}
 
 	files, err := os.ReadDir(dir)
 	if err != nil {
-		return 0, err
+		return nil, 0, err
 	}
 
 	// 1. Identify active sessions
 	active := make(map[string]bool)
+	var sessions []Info
 	for _, f := range files {
 		if filepath.Ext(f.Name()) == ".info" {
 			name := f.Name()[:len(f.Name())-5]
 			info, err := ReadInfo(name)
 			if err == nil && info.IsAlive() {
 				active[name] = true
+				sessions = append(sessions, info)
 			}
 		}
 	}
@@ -305,7 +307,7 @@ func Clean() (int, error) {
 			}
 		}
 	}
-	return removedCount, nil
+	return sessions, removedCount, nil
 }
 
 // List returns a list of active sessions

@@ -206,7 +206,7 @@ func TestClean(t *testing.T) {
 	_ = os.WriteFile(otherFile, []byte("keep"), 0600)
 	defer func() { _ = os.Remove(otherFile) }()
 
-	count, err := Clean()
+	_, count, err := Clean()
 	if err != nil {
 		t.Fatalf("Clean failed: %v", err)
 	}
