@@ -117,7 +117,7 @@ func TestIntegration(t *testing.T) {
 		t.Logf("Failed to write exit: %v", err)
 	}
 	
-	attachCmd.Wait()
+	_ = attachCmd.Wait()
 	
 	time.Sleep(1 * time.Second)
 	if _, err := os.Stat(sockPath); err == nil {

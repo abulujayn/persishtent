@@ -35,7 +35,7 @@ func main() {
 		detach := startCmd.Bool("d", false, "Start in detached mode")
 		sock := startCmd.String("s", "", "Custom socket path")
 		command := startCmd.String("c", "", "Custom command to run")
-		startCmd.Parse(os.Args[2:])
+		_ = startCmd.Parse(os.Args[2:])
 
 		checkNesting()
 		name := ""
@@ -54,7 +54,7 @@ func main() {
 		attachCmd := flag.NewFlagSet("attach", flag.ExitOnError)
 		sock := attachCmd.String("s", "", "Custom socket path")
 		noReplay := attachCmd.Bool("n", false, "Do not replay session output")
-		attachCmd.Parse(os.Args[2:])
+		_ = attachCmd.Parse(os.Args[2:])
 
 		checkNesting()
 		name := ""
@@ -74,7 +74,7 @@ func main() {
 			} else {
 				fmt.Println("Multiple sessions active. Please specify one:")
 				for _, s := range sessions {
-					fmt.Printf("  %s (pid: %d, cmd: %s)\n", s.Name, s.PID, s.Command)
+					fmt.Printf("  %s (pid: %d, cmd: %s, up: %s)\n", s.Name, s.PID, s.Command, time.Since(s.StartTime).Round(time.Second))
 				}
 				return
 			}
@@ -85,7 +85,7 @@ func main() {
 		killCmd := flag.NewFlagSet("kill", flag.ExitOnError)
 		all := killCmd.Bool("a", false, "Kill all sessions")
 		sock := killCmd.String("s", "", "Custom socket path")
-		killCmd.Parse(os.Args[2:])
+		_ = killCmd.Parse(os.Args[2:])
 
 		if *all {
 			sessions, _ := session.List()
@@ -132,7 +132,7 @@ func main() {
 		daemonCmd := flag.NewFlagSet("daemon", flag.ExitOnError)
 		sock := daemonCmd.String("s", "", "Custom socket path")
 		command := daemonCmd.String("c", "", "Custom command")
-		daemonCmd.Parse(os.Args[2:])
+		_ = daemonCmd.Parse(os.Args[2:])
 
 		if daemonCmd.NArg() < 1 {
 			return
@@ -241,11 +241,12 @@ func attachSession(name string, sockPath string, replay bool) {
 	fmt.Print("\x1b[H\x1b[2J")
 	fmt.Printf("[attaching to session '%s'. press ctrl+d, d to detach]\n", name)
 	if err := client.Attach(name, sockPath, replay); err != nil {
-		if err == client.ErrDetached {
+		switch err {
+		case client.ErrDetached:
 			fmt.Println("\n[detached]")
-		} else if err == client.ErrKicked {
+		case client.ErrKicked:
 			fmt.Println("\n[detached by another connection]")
-		} else {
+		default:
 			fmt.Printf("[error attaching to '%s': %v]\n", name, err)
 		}
 	} else {

@@ -58,7 +58,7 @@ func (i Info) IsAlive() bool {
 		// Socket file exists but no one is listening -> stale
 		return false
 	}
-	conn.Close()
+	_ = conn.Close()
 	return true
 }
 

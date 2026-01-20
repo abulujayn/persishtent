@@ -1,16 +1,16 @@
+version: "2"
+
+run:
+  timeout: 5m
+
 linters:
   enable:
     - errcheck
-    - gosimple
     - govet
     - ineffassign
     - staticcheck
     - unused
     - misspell
-    - revive
-
-run:
-  timeout: 5m
 
 issues:
   exclude-use-default: false

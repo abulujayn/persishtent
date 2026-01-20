@@ -77,7 +77,7 @@ func TestSessionInfo(t *testing.T) {
 	
 	// Cleanup
 	path, _ := GetInfoPath(name)
-	defer os.Remove(path)
+	defer func() { _ = os.Remove(path) }()
 
 	// Write
 	if err := WriteInfo(info); err != nil {

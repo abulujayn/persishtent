@@ -21,6 +21,14 @@ Ensure you have Go installed, then:
 go build -o persishtent cmd/persishtent/main.go
 ```
 
+## Linting
+
+To run the linter, you'll need `golangci-lint` installed. Run the following command from the project root:
+
+```bash
+golangci-lint run
+```
+
 ## Usage
 
 ### Commands

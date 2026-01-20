@@ -85,8 +85,8 @@ func TestProcessInput_LiteralCtrlD(t *testing.T) {
 	var detached int32
 
 	// Ctrl+D, Ctrl+D -> Send single Ctrl+D
-	processInput(conn, []byte{0x04}, &pendingCtrlD, &detached)
-	processInput(conn, []byte{0x04}, &pendingCtrlD, &detached)
+	_ = processInput(conn, []byte{0x04}, &pendingCtrlD, &detached)
+	_ = processInput(conn, []byte{0x04}, &pendingCtrlD, &detached)
 	
 	// Should have sent 1 packet with 0x04
 	// Header(5) + Data(1) = 6 bytes
@@ -105,7 +105,7 @@ func TestProcessInput_Passthrough(t *testing.T) {
 	var detached int32
 
 	// Ctrl+D, 'x' -> Send Ctrl+D then 'x' in ONE packet
-	processInput(conn, []byte{0x04, 'x'}, &pendingCtrlD, &detached)
+	_ = processInput(conn, []byte{0x04, 'x'}, &pendingCtrlD, &detached)
 	
 	// Header(5) + Data(2) = 7 bytes
 	if conn.out.Len() != 7 {

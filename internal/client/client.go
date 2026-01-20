@@ -34,7 +34,7 @@ func Attach(name string, sockPath string, replay bool) error {
 	if err != nil {
 		return err
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 
 	// 2. Raw Mode
 	// We enter raw mode early to handle log replay correctly and drain input
@@ -51,7 +51,7 @@ func Attach(name string, sockPath string, replay bool) error {
 			f, err := os.Open(logPath)
 			if err == nil {
 				_, _ = io.Copy(os.Stdout, f)
-				f.Close()
+				_ = f.Close()
 			}
 		}
 	}
@@ -80,14 +80,13 @@ func Attach(name string, sockPath string, replay bool) error {
 
 	// Drain Phase
 	var drainBuf []byte
-	draining := true
 	timeout := time.After(250 * time.Millisecond)
 
 	var pendingCtrlD bool
 	var detached int32
 
 DrainLoop:
-	for draining {
+	for {
 		select {
 		case chunk, ok := <-stdinCh:
 			if !ok {
@@ -105,20 +104,17 @@ DrainLoop:
 							return nil
 						}
 					}
-					draining = false
 					break DrainLoop
 				}
 			}
 			// Safety limit
 			if len(drainBuf) > 2048 {
-				draining = false
 				if err := processInput(conn, drainBuf, &pendingCtrlD, &detached); err != nil {
 					return nil
 				}
 				break DrainLoop
 			}
 		case <-timeout:
-			draining = false
 			// Timeout: Assume no CPR coming, process everything buffered
 			if len(drainBuf) > 0 {
 				if err := processInput(conn, drainBuf, &pendingCtrlD, &detached); err != nil {
@@ -162,9 +158,10 @@ DrainLoop:
 			}
 			return nil
 		}
-		if t == protocol.TypeData {
+		switch t {
+		case protocol.TypeData:
 			_, _ = os.Stdout.Write(payload)
-		} else if t == protocol.TypeKick {
+		case protocol.TypeKick:
 			// Restore terminal state
 			_, _ = os.Stdout.Write([]byte("\x1b[?1049l\x1b[H\x1b[2J"))
 			return ErrKicked
@@ -176,17 +173,18 @@ func processInput(conn net.Conn, data []byte, pendingCtrlD *bool, detached *int3
 	for _, b := range data {
 		if *pendingCtrlD {
 			*pendingCtrlD = false
-			if b == 'd' {
+			switch b {
+			case 'd':
 				// Ctrl+D, d -> Detach
 				atomic.StoreInt32(detached, 1)
-				conn.Close()
+				_ = conn.Close()
 				return io.EOF // signal stop
-			} else if b == 0x04 {
+			case 0x04:
 				// Ctrl+D, Ctrl+D -> Send single Ctrl+D
 				if err := protocol.WritePacket(conn, protocol.TypeData, []byte{0x04}); err != nil {
 					return err
 				}
-			} else {
+			default:
 				// Ctrl+D, <other> -> Send Ctrl+D then <other>
 				if err := protocol.WritePacket(conn, protocol.TypeData, []byte{0x04, b}); err != nil {
 					return err
@@ -228,7 +226,7 @@ func Kill(name string, sockPath string) error {
 	if err != nil {
 		return err
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 
 	// Send SIGKILL (9) to ensure immediate termination
 	payload := []byte{byte(syscall.SIGKILL)}

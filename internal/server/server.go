@@ -32,7 +32,7 @@ func Run(name string, sockPath string, customCmd string) error {
 	if err != nil {
 		return err
 	}
-	defer logFile.Close()
+	defer func() { _ = logFile.Close() }()
 
 	// 2. Setup PTY
 	execCmd := customCmd
@@ -44,7 +44,6 @@ func Run(name string, sockPath string, customCmd string) error {
 	}
 	
 	// Split custom command into args for exec
-	// Simple split by space for now. For complex commands, user should use a shell wrapper.
 	cmdArgs := []string{"-c", execCmd}
 	shellPath := "/bin/sh"
 	if _, err := exec.LookPath("bash"); err == nil {
@@ -81,7 +80,7 @@ func Run(name string, sockPath string, customCmd string) error {
 	if err != nil {
 		return err
 	}
-	defer l.Close()
+	defer func() { _ = l.Close() }()
 	_ = os.Chmod(sockPath, 0600)
 
 	srv := &Server{
@@ -103,13 +102,6 @@ func Run(name string, sockPath string, customCmd string) error {
 			}
 			data := buf[:n]
 			
-			// Simple log truncation logic: 
-			// If we hit maxLogSize, we reset and keep only the last chunk? 
-			// No, that loses context. 
-			// Better: if file > maxLogSize, truncate the beginning.
-			// But Go doesn't have an easy "truncate head" for files.
-			// Minimal approach: If > maxLogSize, wipe it. 
-			// (User specified "clean and minimal", let's keep it simple for now).
 			if logSize > maxLogSize {
 				_ = logFile.Truncate(0)
 				_, _ = logFile.Seek(0, 0)
@@ -122,7 +114,7 @@ func Run(name string, sockPath string, customCmd string) error {
 			}
 			srv.broadcast(data)
 		}
-		l.Close()
+		_ = l.Close()
 	}()
 
 	// 5. Accept Clients
@@ -158,7 +150,7 @@ func (s *Server) broadcast(data []byte) {
 	for conn := range s.Clients {
 		err := protocol.WritePacket(conn, protocol.TypeData, data)
 		if err != nil {
-			conn.Close()
+			_ = conn.Close()
 			delete(s.Clients, conn)
 		}
 	}
@@ -169,7 +161,7 @@ func (s *Server) handleClient(conn net.Conn, ptmx *os.File) {
 	// Kick existing clients
 	for c := range s.Clients {
 		_ = protocol.WritePacket(c, protocol.TypeKick, nil)
-		c.Close()
+		_ = c.Close()
 		delete(s.Clients, c)
 	}
 	s.Clients[conn] = struct{}{}
@@ -179,7 +171,7 @@ func (s *Server) handleClient(conn net.Conn, ptmx *os.File) {
 		s.Lock.Lock()
 		delete(s.Clients, conn)
 		s.Lock.Unlock()
-		conn.Close()
+		_ = conn.Close()
 	}()
 
 	for {
