@@ -17,6 +17,7 @@ import (
 type Server struct {
 	Name    string
 	Cmd     *exec.Cmd
+	Master  net.Conn
 	Clients map[net.Conn]struct{}
 	Lock    sync.Mutex
 }
@@ -35,22 +36,22 @@ func Run(name string, sockPath string, customCmd string) error {
 	defer func() { _ = logFile.Close() }()
 
 	// 2. Setup PTY
-	execCmd := customCmd
-	if execCmd == "" {
-		execCmd = os.Getenv("SHELL")
-		if execCmd == "" {
-			execCmd = "bash"
-		}
+	shell := os.Getenv("SHELL")
+	if shell == "" {
+		shell = "bash"
 	}
 	
-	// Split custom command into args for exec
-	cmdArgs := []string{"-c", execCmd}
-	shellPath := "/bin/sh"
-	if _, err := exec.LookPath("bash"); err == nil {
-		shellPath = "bash"
+	var cmd *exec.Cmd
+	if customCmd != "" {
+		shellPath := "/bin/sh"
+		if _, err := exec.LookPath("bash"); err == nil {
+			shellPath = "bash"
+		}
+		cmd = exec.Command(shellPath, "-c", customCmd)
+	} else {
+		cmd = exec.Command(shell)
 	}
-
-	cmd := exec.Command(shellPath, cmdArgs...)
+	
 	cmd.Env = append(os.Environ(), "TERM=xterm-256color", "PERSISHTENT_SESSION="+name)
 
 	ptmx, err := pty.Start(cmd)
@@ -60,10 +61,14 @@ func Run(name string, sockPath string, customCmd string) error {
 	defer func() { _ = ptmx.Close() }()
 
 	// 2.5 Write Info
+	infoCmd := customCmd
+	if infoCmd == "" {
+		infoCmd = shell
+	}
 	_ = session.WriteInfo(session.Info{
 		Name:      name,
 		PID:       cmd.Process.Pid,
-		Command:   execCmd,
+		Command:   infoCmd,
 		StartTime: time.Now(),
 	})
 
@@ -80,7 +85,12 @@ func Run(name string, sockPath string, customCmd string) error {
 	if err != nil {
 		return err
 	}
-	defer func() { _ = l.Close() }()
+	defer func() {
+		_ = l.Close()
+		_ = os.Remove(sockPath)
+		infoPath, _ := session.GetInfoPath(name)
+		_ = os.Remove(infoPath)
+	}()
 	_ = os.Chmod(sockPath, 0600)
 
 	srv := &Server{
@@ -138,9 +148,6 @@ func Run(name string, sockPath string, customCmd string) error {
 
 	// 6. Wait
 	err = cmd.Wait()
-	_ = os.Remove(sockPath)
-	infoPath, _ := session.GetInfoPath(name)
-	_ = os.Remove(infoPath)
 	return err
 }
 
@@ -157,45 +164,125 @@ func (s *Server) broadcast(data []byte) {
 }
 
 func (s *Server) handleClient(conn net.Conn, ptmx *os.File) {
-	s.Lock.Lock()
-	// Kick existing clients
-	for c := range s.Clients {
-		_ = protocol.WritePacket(c, protocol.TypeKick, nil)
-		_ = c.Close()
-		delete(s.Clients, c)
+
+	// First packet MUST be TypeMode
+
+	t, payload, err := protocol.ReadPacket(conn)
+
+	if err != nil || t != protocol.TypeMode || len(payload) < 1 {
+
+		_ = conn.Close()
+
+		return
+
 	}
+
+
+
+	isReadOnly := payload[0] == 0x01
+
+
+
+	s.Lock.Lock()
+
+	if !isReadOnly {
+
+		// New Master client: kick existing Master
+
+		if s.Master != nil {
+
+			_ = protocol.WritePacket(s.Master, protocol.TypeKick, nil)
+
+			// Connection will be removed by its own goroutine
+
+		}
+
+		s.Master = conn
+
+	}
+
 	s.Clients[conn] = struct{}{}
+
 	s.Lock.Unlock()
 
+
+
 	defer func() {
+
 		s.Lock.Lock()
+
 		delete(s.Clients, conn)
+
+		if s.Master == conn {
+
+			s.Master = nil
+
+		}
+
 		s.Lock.Unlock()
+
 		_ = conn.Close()
+
 	}()
 
+
+
 	for {
+
 		t, payload, err := protocol.ReadPacket(conn)
+
 		if err != nil {
+
 			return
+
 		}
 
-		switch t {
-		case protocol.TypeData:
-			if _, err := ptmx.Write(payload); err != nil {
-				return
-			}
-		case protocol.TypeResize:
-			rows, cols := protocol.DecodeResizePayload(payload)
-			ws := &pty.Winsize{Rows: rows, Cols: cols}
-			_ = pty.Setsize(ptmx, ws)
-		case protocol.TypeSignal:
-			if len(payload) > 0 {
-				sig := syscall.Signal(payload[0])
-				if s.Cmd != nil && s.Cmd.Process != nil {
-					_ = s.Cmd.Process.Signal(sig)
-				}
-			}
+
+
+		// Only Master can send Data, Resize, or Signal
+
+		if isReadOnly {
+
+			continue
+
 		}
+
+
+
+		switch t {
+
+		case protocol.TypeData:
+
+			if _, err := ptmx.Write(payload); err != nil {
+
+				return
+
+			}
+
+		case protocol.TypeResize:
+
+			rows, cols := protocol.DecodeResizePayload(payload)
+
+			ws := &pty.Winsize{Rows: rows, Cols: cols}
+
+			_ = pty.Setsize(ptmx, ws)
+
+		case protocol.TypeSignal:
+
+			if len(payload) > 0 {
+
+				sig := syscall.Signal(payload[0])
+
+				if s.Cmd != nil && s.Cmd.Process != nil {
+
+					_ = s.Cmd.Process.Signal(sig)
+
+				}
+
+			}
+
+		}
+
 	}
+
 }

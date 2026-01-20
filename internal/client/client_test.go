@@ -31,7 +31,7 @@ func TestProcessInput_Normal(t *testing.T) {
 	var detached int32
 
 	input := []byte("h")
-	err := processInput(conn, input, &pendingCtrlD, &detached)
+	err := processInput(conn, input, &pendingCtrlD, &detached, false)
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
@@ -55,7 +55,7 @@ func TestProcessInput_Detach(t *testing.T) {
 
 	// Ctrl+D (0x04) then 'd'
 	input := []byte{0x04}
-	err := processInput(conn, input, &pendingCtrlD, &detached)
+	err := processInput(conn, input, &pendingCtrlD, &detached, false)
 	if err != nil {
 		t.Fatalf("Unexpected error on Ctrl+D: %v", err)
 	}
@@ -67,7 +67,7 @@ func TestProcessInput_Detach(t *testing.T) {
 	}
 
 	input = []byte{'d'}
-	err = processInput(conn, input, &pendingCtrlD, &detached)
+	err = processInput(conn, input, &pendingCtrlD, &detached, false)
 	if err != io.EOF {
 		t.Errorf("Expected EOF (stop signal), got %v", err)
 	}
@@ -85,8 +85,8 @@ func TestProcessInput_LiteralCtrlD(t *testing.T) {
 	var detached int32
 
 	// Ctrl+D, Ctrl+D -> Send single Ctrl+D
-	_ = processInput(conn, []byte{0x04}, &pendingCtrlD, &detached)
-	_ = processInput(conn, []byte{0x04}, &pendingCtrlD, &detached)
+	_ = processInput(conn, []byte{0x04}, &pendingCtrlD, &detached, false)
+	_ = processInput(conn, []byte{0x04}, &pendingCtrlD, &detached, false)
 	
 	// Should have sent 1 packet with 0x04
 	// Header(5) + Data(1) = 6 bytes
@@ -105,7 +105,7 @@ func TestProcessInput_Passthrough(t *testing.T) {
 	var detached int32
 
 	// Ctrl+D, 'x' -> Send Ctrl+D then 'x' in ONE packet
-	_ = processInput(conn, []byte{0x04, 'x'}, &pendingCtrlD, &detached)
+	_ = processInput(conn, []byte{0x04, 'x'}, &pendingCtrlD, &detached, false)
 	
 	// Header(5) + Data(2) = 7 bytes
 	if conn.out.Len() != 7 {
@@ -119,5 +119,30 @@ func TestProcessInput_Passthrough(t *testing.T) {
 	}
 	if data[6] != 'x' {
 		t.Errorf("Expected 'x', got %x", data[6])
+	}
+}
+
+func TestProcessInput_ReadOnly(t *testing.T) {
+	conn := &mockConn{}
+	var pendingCtrlD bool
+	var detached int32
+
+	// Normal input should be ignored
+	_ = processInput(conn, []byte("hello"), &pendingCtrlD, &detached, true)
+	if conn.out.Len() != 0 {
+		t.Errorf("Expected 0 bytes output in read-only mode, got %d", conn.out.Len())
+	}
+
+	// Detach sequence should STILL work
+	_ = processInput(conn, []byte{0x04}, &pendingCtrlD, &detached, true)
+	if !pendingCtrlD {
+		t.Error("pendingCtrlD should be true in read-only mode")
+	}
+	err := processInput(conn, []byte{'d'}, &pendingCtrlD, &detached, true)
+	if err != io.EOF {
+		t.Errorf("Expected EOF on detach in read-only mode, got %v", err)
+	}
+	if atomic.LoadInt32(&detached) != 1 {
+		t.Error("Detached flag not set in read-only mode")
 	}
 }

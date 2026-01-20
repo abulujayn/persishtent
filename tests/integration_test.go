@@ -128,9 +128,9 @@ func TestIntegration(t *testing.T) {
 	killSessionName := "kill-test"
 	killSockPath := filepath.Join(fakeHome, ".persishtent", killSessionName+".sock")
 	
-	startKillCmd := prepareCmd(binPath, "start", killSessionName)
-	if err := startKillCmd.Start(); err != nil {
-		t.Fatalf("Failed to start kill-test session: %v", err)
+	startKillCmd := prepareCmd(binPath, "start", "-d", killSessionName)
+	if out, err := startKillCmd.CombinedOutput(); err != nil {
+		t.Fatalf("Failed to start kill-test session: %v, out: %s", err, out)
 	}
 	
 	time.Sleep(2 * time.Second)
@@ -144,9 +144,22 @@ func TestIntegration(t *testing.T) {
 		t.Fatalf("Failed to run kill command: %v, output: %s", err, out)
 	}
 	
-	time.Sleep(1 * time.Second)
-	
-	if _, err := os.Stat(killSockPath); err == nil {
+	// Trigger lazy cleanup by running list
+	listCheckCmd := prepareCmd(binPath, "list")
+	_, _ = listCheckCmd.CombinedOutput()
+
+	// Verify it is gone (with retry)
+	gone := false
+	for i := 0; i < 20; i++ {
+		if _, err := os.Stat(killSockPath); os.IsNotExist(err) {
+			gone = true
+			break
+		}
+		// Try triggering list again
+		_, _ = prepareCmd(binPath, "list").CombinedOutput()
+		time.Sleep(100 * time.Millisecond)
+	}
+	if !gone {
 		t.Fatalf("Socket still exists after kill command for %s", killSessionName)
 	}
 

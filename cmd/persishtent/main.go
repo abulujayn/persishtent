@@ -23,7 +23,7 @@ func checkNesting() {
 func main() {
 	if len(os.Args) < 2 {
 		checkNesting()
-		startSession(generateAutoName(), false, "", "", true)
+		startSession(generateAutoName(), false, "", "", true, false)
 		return
 	}
 
@@ -35,6 +35,7 @@ func main() {
 		detach := startCmd.Bool("d", false, "Start in detached mode")
 		sock := startCmd.String("s", "", "Custom socket path")
 		command := startCmd.String("c", "", "Custom command to run")
+		readOnly := startCmd.Bool("ro", false, "Start in read-only mode")
 		_ = startCmd.Parse(os.Args[2:])
 
 		checkNesting()
@@ -48,12 +49,13 @@ func main() {
 			fmt.Printf("Error: %v\n", err)
 			return
 		}
-		startSession(name, *detach, *sock, *command, true)
+		startSession(name, *detach, *sock, *command, true, *readOnly)
 
 	case "attach", "a":
 		attachCmd := flag.NewFlagSet("attach", flag.ExitOnError)
 		sock := attachCmd.String("s", "", "Custom socket path")
 		noReplay := attachCmd.Bool("n", false, "Do not replay session output")
+		readOnly := attachCmd.Bool("ro", false, "Attach in read-only mode")
 		_ = attachCmd.Parse(os.Args[2:])
 
 		checkNesting()
@@ -79,7 +81,7 @@ func main() {
 				return
 			}
 		}
-		attachSession(name, *sock, !*noReplay)
+		attachSession(name, *sock, !*noReplay, *readOnly)
 
 	case "kill", "k":
 		killCmd := flag.NewFlagSet("kill", flag.ExitOnError)
@@ -153,9 +155,9 @@ func main() {
 		// Check if session exists
 		sock, _ := session.GetSocketPath(cmd)
 		if _, err := os.Stat(sock); err == nil {
-			attachSession(cmd, "", true)
+			attachSession(cmd, "", true, false)
 		} else {
-			startSession(cmd, false, "", "", true)
+			startSession(cmd, false, "", "", true, false)
 		}
 	}
 }
@@ -177,7 +179,7 @@ func generateAutoName() string {
 	}
 }
 
-func startSession(name string, detach bool, sockPath string, customCmd string, replay bool) {
+func startSession(name string, detach bool, sockPath string, customCmd string, replay bool, readOnly bool) {
 	// 1. Check if already exists
 	checkPath := sockPath
 	if checkPath == "" {
@@ -189,7 +191,7 @@ func startSession(name string, detach bool, sockPath string, customCmd string, r
 			fmt.Printf("Session '%s' already exists.\n", name)
 			return
 		}
-		attachSession(name, sockPath, replay)
+		attachSession(name, sockPath, replay, readOnly)
 		return
 	}
 
@@ -229,7 +231,7 @@ func startSession(name string, detach bool, sockPath string, customCmd string, r
 	// Wait for socket to appear
 	for i := 0; i < 10; i++ {
 		if _, err := os.Stat(checkPath); err == nil {
-			attachSession(name, sockPath, replay)
+			attachSession(name, sockPath, replay, readOnly)
 			return
 		}
 		time.Sleep(100 * time.Millisecond)
@@ -237,10 +239,14 @@ func startSession(name string, detach bool, sockPath string, customCmd string, r
 	fmt.Println("Timed out waiting for session to start.")
 }
 
-func attachSession(name string, sockPath string, replay bool) {
+func attachSession(name string, sockPath string, replay bool, readOnly bool) {
 	fmt.Print("\x1b[H\x1b[2J")
-	fmt.Printf("[attaching to session '%s'. press ctrl+d, d to detach]\n", name)
-	if err := client.Attach(name, sockPath, replay); err != nil {
+	if readOnly {
+		fmt.Printf("[attaching to session '%s' (READ-ONLY). press ctrl+d, d to detach]\n", name)
+	} else {
+		fmt.Printf("[attaching to session '%s'. press ctrl+d, d to detach]\n", name)
+	}
+	if err := client.Attach(name, sockPath, replay, readOnly); err != nil {
 		switch err {
 		case client.ErrDetached:
 			fmt.Println("\n[detached]")

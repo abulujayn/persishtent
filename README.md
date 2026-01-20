@@ -64,10 +64,12 @@ go test -v -race ./...
 - `-d`: Start in detached mode.
 - `-s <path>`: Custom socket path.
 - `-c <cmd>`: Custom command to run.
+- `-ro`: Start in read-only mode.
 
 #### `attach`
 - `-n`: Do not replay session output.
 - `-s <path>`: Custom socket path.
+- `-ro`: Attach in read-only mode.
 
 #### `kill`
 - `-a`: Kill all active sessions.

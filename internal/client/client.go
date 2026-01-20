@@ -20,7 +20,7 @@ var ErrDetached = errors.New("detached")
 var ErrKicked = errors.New("kicked by another session")
 
 // Attach connects to an existing session
-func Attach(name string, sockPath string, replay bool) error {
+func Attach(name string, sockPath string, replay bool, readOnly bool) error {
 	var err error
 	if sockPath == "" {
 		sockPath, err = session.GetSocketPath(name)
@@ -35,6 +35,15 @@ func Attach(name string, sockPath string, replay bool) error {
 		return err
 	}
 	defer func() { _ = conn.Close() }()
+
+	// 1.5 Send Mode
+	mode := []byte{0x00} // Master
+	if readOnly {
+		mode = []byte{0x01} // Read-only
+	}
+	if err := protocol.WritePacket(conn, protocol.TypeMode, mode); err != nil {
+		return err
+	}
 
 	// 2. Raw Mode
 	// We enter raw mode early to handle log replay correctly and drain input
@@ -100,7 +109,7 @@ DrainLoop:
 					// Found CPR, discard it and everything before
 					remainder := drainBuf[idx+1:]
 					if len(remainder) > 0 {
-						if err := processInput(conn, remainder, &pendingCtrlD, &detached); err != nil {
+						if err := processInput(conn, remainder, &pendingCtrlD, &detached, readOnly); err != nil {
 							return nil
 						}
 					}
@@ -109,7 +118,7 @@ DrainLoop:
 			}
 			// Safety limit
 			if len(drainBuf) > 2048 {
-				if err := processInput(conn, drainBuf, &pendingCtrlD, &detached); err != nil {
+				if err := processInput(conn, drainBuf, &pendingCtrlD, &detached, readOnly); err != nil {
 					return nil
 				}
 				break DrainLoop
@@ -117,7 +126,7 @@ DrainLoop:
 		case <-timeout:
 			// Timeout: Assume no CPR coming, process everything buffered
 			if len(drainBuf) > 0 {
-				if err := processInput(conn, drainBuf, &pendingCtrlD, &detached); err != nil {
+				if err := processInput(conn, drainBuf, &pendingCtrlD, &detached, readOnly); err != nil {
 					return nil
 				}
 			}
@@ -126,22 +135,26 @@ DrainLoop:
 	}
 
 	// 5. Initial Resize
-	sendResize(conn)
+	if !readOnly {
+		sendResize(conn)
+	}
 
 	// 6. Handle Resize Signals
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGWINCH)
-	go func() {
-		for range sigCh {
-			sendResize(conn)
-		}
-	}()
+	if !readOnly {
+		sigCh := make(chan os.Signal, 1)
+		signal.Notify(sigCh, syscall.SIGWINCH)
+		go func() {
+			for range sigCh {
+				sendResize(conn)
+			}
+		}()
+	}
 
 	// 7. Stdin -> Socket (Main Loop)
 	// We continue reading from stdinCh
 	go func() {
 		for chunk := range stdinCh {
-			if err := processInput(conn, chunk, &pendingCtrlD, &detached); err != nil {
+			if err := processInput(conn, chunk, &pendingCtrlD, &detached, readOnly); err != nil {
 				return
 			}
 		}
@@ -169,7 +182,7 @@ DrainLoop:
 	}
 }
 
-func processInput(conn net.Conn, data []byte, pendingCtrlD *bool, detached *int32) error {
+func processInput(conn net.Conn, data []byte, pendingCtrlD *bool, detached *int32, readOnly bool) error {
 	for _, b := range data {
 		if *pendingCtrlD {
 			*pendingCtrlD = false
@@ -180,11 +193,17 @@ func processInput(conn net.Conn, data []byte, pendingCtrlD *bool, detached *int3
 				_ = conn.Close()
 				return io.EOF // signal stop
 			case 0x04:
+				if readOnly {
+					continue
+				}
 				// Ctrl+D, Ctrl+D -> Send single Ctrl+D
 				if err := protocol.WritePacket(conn, protocol.TypeData, []byte{0x04}); err != nil {
 					return err
 				}
 			default:
+				if readOnly {
+					continue
+				}
 				// Ctrl+D, <other> -> Send Ctrl+D then <other>
 				if err := protocol.WritePacket(conn, protocol.TypeData, []byte{0x04, b}); err != nil {
 					return err
@@ -194,6 +213,9 @@ func processInput(conn net.Conn, data []byte, pendingCtrlD *bool, detached *int3
 			if b == 0x04 {
 				*pendingCtrlD = true
 			} else {
+				if readOnly {
+					continue
+				}
 				if err := protocol.WritePacket(conn, protocol.TypeData, []byte{b}); err != nil {
 					return err
 				}
@@ -227,6 +249,11 @@ func Kill(name string, sockPath string) error {
 		return err
 	}
 	defer func() { _ = conn.Close() }()
+
+	// Send Mode (Master mode to ensure signal is processed)
+	if err := protocol.WritePacket(conn, protocol.TypeMode, []byte{0x00}); err != nil {
+		return err
+	}
 
 	// Send SIGKILL (9) to ensure immediate termination
 	payload := []byte{byte(syscall.SIGKILL)}
