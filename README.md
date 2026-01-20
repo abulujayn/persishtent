@@ -49,7 +49,7 @@ go test -v -race ./...
 
 | Command | Alias | Description |
 |---------|-------|-------------|
-| `persishtent` | - | Start a new auto-named session (e.g., `s0`). |
+| `persishtent` | - | Smart entry: Attach if 1 session exists, else start new. |
 | `persishtent <name>` | - | Start or attach to a session named `<name>`. |
 | `persishtent list` | `ls` | List active sessions with PID and command. |
 | `persishtent start [flags] [name]` | `s` | Start a new session (auto-named if omitted). |

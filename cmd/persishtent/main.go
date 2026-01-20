@@ -22,11 +22,20 @@ func checkNesting() {
 
 func main() {
 	// Auto-prune stale sessions on every invocation
-	_, _ = session.List()
+	sessions, _ := session.List()
 
 	if len(os.Args) < 2 {
 		checkNesting()
-		startSession(generateAutoName(), false, "", "", true, false, "")
+		if len(sessions) == 1 {
+			attachSession(sessions[0].Name, "", true, false, 0)
+		} else if len(sessions) == 0 {
+			startSession(generateAutoName(), false, "", "", true, false, "")
+		} else {
+			fmt.Println("Multiple sessions active. Please specify one:")
+			for _, s := range sessions {
+				fmt.Printf("  %s (pid: %d, cmd: %s, up: %s)\n", s.Name, s.PID, s.Command, time.Since(s.StartTime).Round(time.Second))
+			}
+		}
 		return
 	}
 
