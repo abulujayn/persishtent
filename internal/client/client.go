@@ -70,221 +70,275 @@ func Attach(name string, sockPath string, replay bool, readOnly bool, tail int) 
 			logPath, _ = session.GetLogPath(name)
 		}
 
-		if logPath != "" {
-			f, err := os.Open(logPath)
-			if err == nil {
-				if tail > 0 {
-					replayTail(f, tail)
-				} else {
-					_, _ = io.Copy(os.Stdout, f)
-				}
-				_ = f.Close()
-			}
-		}
-	}
-
-	// 4. Sync Terminal (Drain responses)
-	// Send Device Status Report (DSR) request.
-	_, _ = os.Stdout.Write([]byte("\x1b[6n"))
-
-	// We use a dedicated channel for Stdin to allow select with timeout
-	stdinCh := make(chan []byte)
-	go func() {
-		buf := make([]byte, 1024)
-		for {
-			n, err := os.Stdin.Read(buf)
-			if n > 0 {
-				tmp := make([]byte, n)
-				copy(tmp, buf[:n])
-				stdinCh <- tmp
-			}
-			if err != nil {
-				close(stdinCh)
-				return
-			}
-		}
-	}()
-
-	// Drain Phase
-	var drainBuf []byte
-	timeout := time.After(250 * time.Millisecond)
-
-	var pendingCtrlD bool
-	var detached int32
-
-DrainLoop:
-	for {
-		select {
-		case chunk, ok := <-stdinCh:
-			if !ok {
-				return nil // Stdin closed
-			}
-			drainBuf = append(drainBuf, chunk...)
-
-			for {
-				// Look for terminal responses: ESC [ ... R (CPR) or ESC [ ... c (DA)
-				idxR := bytes.IndexByte(drainBuf, 'R')
-				idxC := bytes.IndexByte(drainBuf, 'c')
-
-				idx := -1
-				if idxR >= 0 && (idxC < 0 || idxR < idxC) {
-					idx = idxR
-				} else if idxC >= 0 {
-					idx = idxC
-				}
-
-				if idx >= 0 {
-					// Check if it's an escape sequence ESC [
-					if escIdx := bytes.LastIndex(drainBuf[:idx], []byte("\x1b[")); escIdx >= 0 {
-						// 1. Forward everything BEFORE the escape sequence
-						if escIdx > 0 {
-							if err := processInput(conn, drainBuf[:escIdx], &pendingCtrlD, &detached, readOnly); err != nil {
-								return nil
-							}
-						}
-
-						// 2. Check if it's our CPR sentinel
-						isCPR := (drainBuf[idx] == 'R')
-
-						// 3. Swallow the response and continue
-						drainBuf = drainBuf[idx+1:]
-						if isCPR {
-							// Stop draining once we hit our sentinel
-							if len(drainBuf) > 0 {
-								if err := processInput(conn, drainBuf, &pendingCtrlD, &detached, readOnly); err != nil {
-									return nil
-								}
-							}
-							break DrainLoop
-						}
-						continue
-					}
-				}
-				// No more identifiable terminal responses in current buffer
-				break
-			}
-
-			// Safety limit: if buffer grows too large without a sentinel, flush and stop
-			if len(drainBuf) > 2048 {
-				if err := processInput(conn, drainBuf, &pendingCtrlD, &detached, readOnly); err != nil {
-					return nil
-				}
-				break DrainLoop
-			}
-		case <-timeout:
-			// Timeout: Assume no CPR coming, process everything buffered
-			if len(drainBuf) > 0 {
-				if err := processInput(conn, drainBuf, &pendingCtrlD, &detached, readOnly); err != nil {
-					return nil
-				}
-			}
-			break DrainLoop
-		}
-	}
-
-	// 5. Initial Resize
-	if !readOnly {
-		sendResize(conn)
-	}
-
-	// 6. Handle Resize Signals
-	if !readOnly {
-		sigCh := make(chan os.Signal, 1)
-		signal.Notify(sigCh, syscall.SIGWINCH)
-		go func() {
-			for range sigCh {
-				sendResize(conn)
-			}
-		}()
-	}
-
-	// 7. Stdin -> Socket (Main Loop)
-	// We continue reading from stdinCh
-	go func() {
-		for chunk := range stdinCh {
-			if err := processInput(conn, chunk, &pendingCtrlD, &detached, readOnly); err != nil {
-				return
-			}
-		}
-	}()
-
-	// 8. Socket -> Stdout
-	for {
-		t, payload, err := protocol.ReadPacket(conn)
-		if err != nil {
-			if atomic.LoadInt32(&detached) == 1 {
-				restoreTerminal()
-				return ErrDetached
-			}
-			return nil
-		}
-		switch t {
-		case protocol.TypeData:
-			_, _ = os.Stdout.Write(payload)
-		case protocol.TypeKick:
-			restoreTerminal()
-			return ErrKicked
-		}
-	}
-}
-
-// restoreTerminal sends escape sequences to reset terminal modes that might have been
-// enabled by applications inside the session (e.g. alternate buffer, mouse tracking).
-func restoreTerminal() {
-	// \x1b[m       : Reset colors/attributes
-	// \x1b[?1049l : Exit alternate buffer
-	// \x1b[?1000l... : Disable mouse tracking
-	// \x1b[?2004l : Disable bracketed paste
-	// \x1b[?25h   : Show cursor
-	// \x1b[H\x1b[2J : Clear screen
-	_, _ = os.Stdout.Write([]byte("\x1b[m\x1b[?1049l\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l\x1b[?2004l\x1b[?25h\x1b[H\x1b[2J"))
-}
-
-func replayTail(f *os.File, n int) {
-	// Minimal backward scanning tail
-	stat, _ := f.Stat()
-	size := stat.Size()
-	if size == 0 {
-		return
-	}
-
-	bufSize := int64(4096)
-	if bufSize > size {
-		bufSize = size
-	}
-
-	buf := make([]byte, bufSize)
-	offset := size - bufSize
-	lines := 0
-	var finalData []byte
-
-	for offset >= 0 {
-		_, _ = f.Seek(offset, 0)
-		_, _ = io.ReadFull(f, buf)
+		        if logPath != "" {
+		            f, err := os.Open(logPath)
+		            if err == nil {
+		                if tail > 0 {
+		                    replayTail(os.Stdout, f, tail)
+		                } else {
+		                    _, _ = io.Copy(os.Stdout, f)
+		                }
+		                _ = f.Close()
+		            }
+		        }
+		    }
 		
-		for i := len(buf) - 1; i >= 0; i-- {
-			if buf[i] == '\n' {
-				lines++
-				if lines > n {
-					finalData = append(buf[i+1:], finalData...)
-					_, _ = os.Stdout.Write(finalData)
-					return
-				}
+		    // 4. Sync Terminal (Drain responses)
+		    // Send Device Status Report (DSR) request.
+		    _, _ = os.Stdout.Write([]byte("\x1b[6n"))
+		
+		    // We use a dedicated channel for Stdin to allow select with timeout
+		    stdinCh := make(chan []byte)
+		    go func() {
+		        buf := make([]byte, 1024)
+		        for {
+		            n, err := os.Stdin.Read(buf)
+		            if n > 0 {
+		                tmp := make([]byte, n)
+		                copy(tmp, buf[:n])
+		                stdinCh <- tmp
+		            }
+		            if err != nil {
+		                close(stdinCh)
+		                return
+		            }
+		        }
+		    }()
+		
+		    // Drain Phase
+		    var drainBuf []byte
+		    timeout := time.After(250 * time.Millisecond)
+		
+		    var pendingCtrlD bool
+		    var detached int32
+		
+		DrainLoop:
+		    for {
+		        select {
+		        case chunk, ok := <-stdinCh:
+		            if !ok {
+		                return nil // Stdin closed
+		            }
+		            drainBuf = append(drainBuf, chunk...)
+		
+		            for {
+		                // Look for terminal responses: ESC [ ... R (CPR) or ESC [ ... c (DA)
+		                idxR := bytes.IndexByte(drainBuf, 'R')
+		                idxC := bytes.IndexByte(drainBuf, 'c')
+		
+		                idx := -1
+		                if idxR >= 0 && (idxC < 0 || idxR < idxC) {
+		                    idx = idxR
+		                } else if idxC >= 0 {
+		                    idx = idxC
+		                }
+		
+		                if idx >= 0 {
+		                    // Check if it's an escape sequence ESC [
+		                    if escIdx := bytes.LastIndex(drainBuf[:idx], []byte("\x1b[")); escIdx >= 0 {
+		                        // 1. Forward everything BEFORE the escape sequence
+		                        if escIdx > 0 {
+		                            if err := processInput(conn, drainBuf[:escIdx], &pendingCtrlD, &detached, readOnly); err != nil {
+		                                return nil
+		                            }
+		                        }
+		
+		                        // 2. Check if it's our CPR sentinel
+		                        isCPR := (drainBuf[idx] == 'R')
+		
+		                        // 3. Swallow the response and continue
+		                        drainBuf = drainBuf[idx+1:]
+		                        if isCPR {
+		                            // Stop draining once we hit our sentinel
+		                            if len(drainBuf) > 0 {
+		                                if err := processInput(conn, drainBuf, &pendingCtrlD, &detached, readOnly); err != nil {
+		                                    return nil
+		                                }
+		                            }
+		                            break DrainLoop
+		                        }
+		                        continue
+		                    }
+		                }
+		                // No more identifiable terminal responses in current buffer
+		                break
+		            }
+		
+		            // Safety limit: if buffer grows too large without a sentinel, flush and stop
+		            if len(drainBuf) > 2048 {
+		                if err := processInput(conn, drainBuf, &pendingCtrlD, &detached, readOnly); err != nil {
+		                    return nil
+		                }
+		                break DrainLoop
+		            }
+		        case <-timeout:
+		            // Timeout: Assume no CPR coming, process everything buffered
+		            if len(drainBuf) > 0 {
+		                if err := processInput(conn, drainBuf, &pendingCtrlD, &detached, readOnly); err != nil {
+		                    return nil
+		                }
+		            }
+		            break DrainLoop
+		        }
+		    }
+		
+		    // 5. Initial Resize
+		    if !readOnly {
+		        sendResize(conn)
+		    }
+		
+		    // 6. Handle Resize Signals
+		    if !readOnly {
+		        sigCh := make(chan os.Signal, 1)
+		        signal.Notify(sigCh, syscall.SIGWINCH)
+		        go func() {
+		            for range sigCh {
+		                sendResize(conn)
+		            }
+		        }()
+		    }
+		
+		    // 7. Stdin -> Socket (Main Loop)
+		    // We continue reading from stdinCh
+		    go func() {
+		        for chunk := range stdinCh {
+		            if err := processInput(conn, chunk, &pendingCtrlD, &detached, readOnly); err != nil {
+		                return
+		            }
+		        }
+		    }()
+		
+		    // 8. Socket -> Stdout
+		    for {
+		        t, payload, err := protocol.ReadPacket(conn)
+		        if err != nil {
+		            if atomic.LoadInt32(&detached) == 1 {
+		                restoreTerminal()
+		                return ErrDetached
+		            }
+		            return nil
+		        }
+		        switch t {
+		        case protocol.TypeData:
+		            _, _ = os.Stdout.Write(payload)
+		        case protocol.TypeKick:
+		            restoreTerminal()
+		            return ErrKicked
+		        }
+		    }
+		}
+		
+		// restoreTerminal sends escape sequences to reset terminal modes that might have been
+		// enabled by applications inside the session (e.g. alternate buffer, mouse tracking).
+		func restoreTerminal() {
+		    // \x1b[m       : Reset colors/attributes
+		    // \x1b[?1049l : Exit alternate buffer
+		    // \x1b[?1000l... : Disable mouse tracking
+		    // \x1b[?2004l : Disable bracketed paste
+		    // \x1b[?25h   : Show cursor
+		    // \x1b[H\x1b[2J : Clear screen
+		    _, _ = os.Stdout.Write([]byte("\x1b[m\x1b[?1049l\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l\x1b[?2004l\x1b[?25h\x1b[H\x1b[2J"))
+		}
+		
+		func replayTail(w io.Writer, f *os.File, n int) {
+		
+			// Minimal backward scanning tail
+		
+			stat, _ := f.Stat()
+		
+			size := stat.Size()
+		
+			if size == 0 {
+		
+				return
+		
 			}
+		
+		
+		
+			bufSize := int64(4096)
+		
+			if bufSize > size {
+		
+				bufSize = size
+		
+			}
+		
+		
+		
+			buf := make([]byte, bufSize)
+		
+			offset := size - bufSize
+		
+			lines := 0
+		
+			var finalData []byte
+		
+		
+		
+			for offset >= 0 {
+		
+				_, _ = f.Seek(offset, 0)
+		
+				_, _ = io.ReadFull(f, buf)
+		
+				
+		
+				for i := len(buf) - 1; i >= 0; i-- {
+		
+					if buf[i] == '\n' {
+		
+						// Skip the very last character if it's a newline
+		
+						if offset+int64(i) == size-1 {
+		
+							continue
+		
+						}
+		
+						lines++
+		
+						if lines >= n {
+		
+							finalData = append(buf[i+1:], finalData...)
+		
+							_, _ = w.Write(finalData)
+		
+							return
+		
+						}
+		
+					}
+		
+				}
+		
+				finalData = append(buf, finalData...)
+		
+				if offset == 0 {
+		
+					break
+		
+				}
+		
+				offset -= bufSize
+		
+				if offset < 0 {
+		
+					bufSize += offset
+		
+					offset = 0
+		
+				}
+		
+			}
+		
+			_, _ = w.Write(finalData)
+		
 		}
-		finalData = append(buf, finalData...)
-		if offset == 0 {
-			break
-		}
-		offset -= bufSize
-		if offset < 0 {
-			bufSize += offset
-			offset = 0
-		}
-	}
-	_, _ = os.Stdout.Write(finalData)
-}
-
+		
+		
+		
+		
 func processInput(conn net.Conn, data []byte, pendingCtrlD *bool, detached *int32, readOnly bool) error {
 	for _, b := range data {
 		if *pendingCtrlD {

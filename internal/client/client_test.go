@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"io"
 	"net"
+	"os"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -144,5 +145,46 @@ func TestProcessInput_ReadOnly(t *testing.T) {
 	}
 	if atomic.LoadInt32(&detached) != 1 {
 		t.Error("Detached flag not set in read-only mode")
+	}
+}
+
+func TestReplayTail(t *testing.T) {
+	tests := []struct {
+		name     string
+		content  string
+		n        int
+		expected string
+	}{
+		{"Empty", "", 5, ""},
+		{"SingleLine", "hello", 1, "hello"},
+		{"ExactLines", "1\n2\n3\n", 3, "1\n2\n3\n"},
+		{"MoreLinesThanAvailable", "1\n2\n", 5, "1\n2\n"},
+		{"FewerLinesThanAvailable", "1\n2\n3\n4\n5\n", 2, "4\n5\n"},
+		{"LargeContent", func() string {
+			var s string
+			for i := 0; i < 100; i++ {
+				s += "line\n"
+			}
+			return s
+		}(), 5, "line\nline\nline\nline\nline\n"},
+		{"NoTrailingNewline", "1\n2\n3", 2, "2\n3"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tmpFile, err := os.CreateTemp(t.TempDir(), "tail-test")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := tmpFile.WriteString(tt.content); err != nil {
+				t.Fatal(err)
+			}
+			
+			var out bytes.Buffer
+			replayTail(&out, tmpFile, tt.n)
+			if out.String() != tt.expected {
+				t.Errorf("expected %q, got %q", tt.expected, out.String())
+			}
+		})
 	}
 }

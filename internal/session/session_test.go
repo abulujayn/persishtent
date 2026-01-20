@@ -8,10 +8,6 @@ import (
 )
 
 func TestEnsureDir(t *testing.T) {
-	// We can't easily mock UserHomeDir without internal changes or env var hacking,
-	// but we can check if it returns a path that exists.
-	// Actually, we can assume os.UserHomeDir works on linux.
-	
 	path, err := EnsureDir()
 	if err != nil {
 		t.Fatalf("EnsureDir failed: %v", err)
@@ -24,11 +20,6 @@ func TestEnsureDir(t *testing.T) {
 	if !info.IsDir() {
 		t.Fatalf("Path is not a directory: %s", path)
 	}
-	
-	// Cleanup if it's a test environment? 
-	// Ideally we don't want to clutter the real home dir, 
-	// but since we are in a dev environment, it's acceptable to use the real path 
-	// provided we don't destroy anything important.
 }
 
 func TestGetPaths(t *testing.T) {
@@ -70,21 +61,17 @@ func TestSessionInfo(t *testing.T) {
 		StartTime: now,
 	}
 
-	// Ensure dir exists
 	if _, err := EnsureDir(); err != nil {
 		t.Fatalf("EnsureDir failed: %v", err)
 	}
 	
-	// Cleanup
 	path, _ := GetInfoPath(name)
 	defer func() { _ = os.Remove(path) }()
 
-	// Write
 	if err := WriteInfo(info); err != nil {
 		t.Fatalf("WriteInfo failed: %v", err)
 	}
 
-	// Read
 	readInfo, err := ReadInfo(name)
 	if err != nil {
 		t.Fatalf("ReadInfo failed: %v", err)
@@ -118,5 +105,52 @@ func TestValidateName(t *testing.T) {
 		if err := ValidateName(name); err == nil {
 			t.Errorf("Expected name '%s' to be invalid, but got no error", name)
 		}
+	}
+}
+
+func TestSessionRename(t *testing.T) {
+	oldName := "old-session"
+	newName := "new-session"
+	
+	Cleanup(oldName)
+	Cleanup(newName)
+	defer Cleanup(newName)
+
+	dir, _ := EnsureDir()
+	_ = os.WriteFile(filepath.Join(dir, oldName+".sock"), []byte("sock"), 0600)
+	_ = os.WriteFile(filepath.Join(dir, oldName+".log"), []byte("log"), 0600)
+	info := Info{Name: oldName, PID: 123}
+	_ = WriteInfo(info)
+
+	if err := Rename(oldName, newName); err != nil {
+		t.Fatalf("Rename failed: %v", err)
+	}
+
+	if _, err := os.Stat(filepath.Join(dir, oldName+".sock")); err == nil {
+		t.Errorf("Old socket still exists")
+	}
+
+	if _, err := os.Stat(filepath.Join(dir, newName+".sock")); err != nil {
+		t.Errorf("New socket missing")
+	}
+	
+	newInfo, err := ReadInfo(newName)
+	if err != nil {
+		t.Fatalf("Failed to read new info: %v", err)
+	}
+	if newInfo.Name != newName {
+		t.Errorf("Info name not updated. Got %s, want %s", newInfo.Name, newName)
+	}
+}
+
+func TestIsAliveEdgeCases(t *testing.T) {
+	info := Info{Name: "dead", PID: -1}
+	if info.IsAlive() {
+		t.Errorf("Expected IsAlive to be false for PID -1")
+	}
+
+	info = Info{Name: "nosock", PID: os.Getpid()}
+	if info.IsAlive() {
+		t.Errorf("Expected IsAlive to be false when socket is missing")
 	}
 }
