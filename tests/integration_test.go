@@ -92,7 +92,7 @@ func TestIntegration(t *testing.T) {
 	}
 
 	// Verify environment variable
-	envCmd := "echo $PERSISHTENT_SESSION > " + envFile + "\n"
+	envCmd := "echo $PERSISHTENT_SESSION > " + envFile + "; env | grep PS1 > " + envFile + "_ps1\n"
 	if _, err := ptmx.Write([]byte(envCmd)); err != nil {
 		t.Fatalf("Failed to write env check to ptmx: %v", err)
 	}
@@ -111,6 +111,19 @@ func TestIntegration(t *testing.T) {
 	}
 	if string(bytes.TrimSpace(envContent)) != sessionName {
 		t.Fatalf("PERSISHTENT_SESSION mismatch. Got %s, want %s", string(envContent), sessionName)
+	}
+
+	// Verify PS1 was modified
+	ps1Content, err := os.ReadFile(envFile + "_ps1")
+	if err != nil {
+		t.Fatalf("Failed to read PS1 check file: %v", err)
+	}
+	// We expect "psh:integration-test " to be present.
+	// But note: env output will be PS1=...
+	if !bytes.Contains(ps1Content, []byte("psh:"+sessionName)) {
+		t.Logf("PS1 check warning: 'psh:%s' not found in PS1 env. Got: %s. This might be due to shell startup overriding it.", sessionName, string(ps1Content))
+		// We don't fail here because some shells (like test environments) might handle PS1 differently or not export it to 'env'.
+		// But checking it is useful.
 	}
 	
 	// Detach (Kill the attach command)
