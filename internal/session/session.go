@@ -33,7 +33,17 @@ type Info struct {
 	Name      string    `json:"name"`
 	PID       int       `json:"pid"`
 	Command   string    `json:"command"`
+	LogPath   string    `json:"log_path"`
 	StartTime time.Time `json:"start_time"`
+}
+
+// GetSSHSockPath returns the path to the stable ssh-agent symlink for a session
+func GetSSHSockPath(name string) (string, error) {
+	dir, err := EnsureDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, fmt.Sprintf("%s.ssh_auth_sock", name)), nil
 }
 
 // IsAlive checks if the shell process is still running and the socket is active
@@ -68,6 +78,7 @@ func Cleanup(name string) {
 	_ = os.Remove(filepath.Join(dir, name+".sock"))
 	_ = os.Remove(filepath.Join(dir, name+".info"))
 	_ = os.Remove(filepath.Join(dir, name+".log"))
+	_ = os.Remove(filepath.Join(dir, name+".ssh_auth_sock"))
 }
 
 // Rename moves all session files to a new name

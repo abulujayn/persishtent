@@ -1,6 +1,7 @@
 package server
 
 import (
+	"bytes"
 	"net"
 	"os"
 	"os/exec"
@@ -23,17 +24,28 @@ type Server struct {
 }
 
 // Run starts the session server. It blocks until the shell process exits.
-func Run(name string, sockPath string, customCmd string) error {
+func Run(name string, sockPath string, logPath string, customCmd string) error {
 	// 1. Setup Log
-	logPath, err := session.GetLogPath(name)
-	if err != nil {
-		return err
+	if logPath == "" {
+		var err error
+		logPath, err = session.GetLogPath(name)
+		if err != nil {
+			return err
+		}
 	}
 	logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_TRUNC|os.O_RDWR, 0600)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = logFile.Close() }()
+
+	// 1.5 Setup SSH Agent symlink
+	sshSymlink, _ := session.GetSSHSockPath(name)
+	currentSSH := os.Getenv("SSH_AUTH_SOCK")
+	if currentSSH != "" {
+		_ = os.Remove(sshSymlink)
+		_ = os.Symlink(currentSSH, sshSymlink)
+	}
 
 	// 2. Setup PTY
 	shell := os.Getenv("SHELL")
@@ -53,6 +65,10 @@ func Run(name string, sockPath string, customCmd string) error {
 	}
 	
 	cmd.Env = append(os.Environ(), "TERM=xterm-256color", "PERSISHTENT_SESSION="+name)
+	if currentSSH != "" {
+		// Point the child to the stable symlink
+		cmd.Env = append(cmd.Env, "SSH_AUTH_SOCK="+sshSymlink)
+	}
 
 	ptmx, err := pty.Start(cmd)
 	if err != nil {
@@ -69,6 +85,7 @@ func Run(name string, sockPath string, customCmd string) error {
 		Name:      name,
 		PID:       cmd.Process.Pid,
 		Command:   infoCmd,
+		LogPath:   logPath,
 		StartTime: time.Now(),
 	})
 
@@ -267,15 +284,35 @@ func (s *Server) handleClient(conn net.Conn, ptmx *os.File) {
 
 			_ = pty.Setsize(ptmx, ws)
 
-		case protocol.TypeSignal:
+				case protocol.TypeSignal:
 
-			if len(payload) > 0 {
+					if len(payload) > 0 {
 
-				sig := syscall.Signal(payload[0])
+						sig := syscall.Signal(payload[0])
 
-				if s.Cmd != nil && s.Cmd.Process != nil {
+						if s.Cmd != nil && s.Cmd.Process != nil {
 
-					_ = s.Cmd.Process.Signal(sig)
+							_ = s.Cmd.Process.Signal(sig)
+
+						}
+
+					}
+
+				case protocol.TypeEnv:
+
+					// payload contains key=value
+
+					if bytes.HasPrefix(payload, []byte("SSH_AUTH_SOCK=")) {
+
+						newSock := string(payload[len("SSH_AUTH_SOCK="):])
+
+						sshSymlink, _ := session.GetSSHSockPath(s.Name)
+
+						_ = os.Remove(sshSymlink)
+
+						_ = os.Symlink(newSock, sshSymlink)
+
+					}
 
 				}
 
@@ -283,6 +320,4 @@ func (s *Server) handleClient(conn net.Conn, ptmx *os.File) {
 
 		}
 
-	}
-
-}
+		

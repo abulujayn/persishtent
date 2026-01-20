@@ -20,7 +20,7 @@ var ErrDetached = errors.New("detached")
 var ErrKicked = errors.New("kicked by another session")
 
 // Attach connects to an existing session
-func Attach(name string, sockPath string, replay bool, readOnly bool) error {
+func Attach(name string, sockPath string, replay bool, readOnly bool, tail int) error {
 	var err error
 	if sockPath == "" {
 		sockPath, err = session.GetSocketPath(name)
@@ -45,6 +45,12 @@ func Attach(name string, sockPath string, replay bool, readOnly bool) error {
 		return err
 	}
 
+	// 1.6 Sync Env
+	currentSSH := os.Getenv("SSH_AUTH_SOCK")
+	if currentSSH != "" {
+		_ = protocol.WritePacket(conn, protocol.TypeEnv, []byte("SSH_AUTH_SOCK="+currentSSH))
+	}
+
 	// 2. Raw Mode
 	// We enter raw mode early to handle log replay correctly and drain input
 	oldState, err := term.MakeRaw(int(os.Stdin.Fd()))
@@ -55,11 +61,23 @@ func Attach(name string, sockPath string, replay bool, readOnly bool) error {
 
 	// 3. Replay Log
 	if replay {
-		logPath, err := session.GetLogPath(name)
-		if err == nil {
+		// Use info to find correct log path if custom
+		info, err := session.ReadInfo(name)
+		logPath := ""
+		if err == nil && info.LogPath != "" {
+			logPath = info.LogPath
+		} else {
+			logPath, _ = session.GetLogPath(name)
+		}
+
+		if logPath != "" {
 			f, err := os.Open(logPath)
 			if err == nil {
-				_, _ = io.Copy(os.Stdout, f)
+				if tail > 0 {
+					replayTail(f, tail)
+				} else {
+					_, _ = io.Copy(os.Stdout, f)
+				}
 				_ = f.Close()
 			}
 		}
@@ -220,6 +238,51 @@ func restoreTerminal() {
 	// \x1b[?25h   : Show cursor
 	// \x1b[H\x1b[2J : Clear screen
 	_, _ = os.Stdout.Write([]byte("\x1b[m\x1b[?1049l\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l\x1b[?2004l\x1b[?25h\x1b[H\x1b[2J"))
+}
+
+func replayTail(f *os.File, n int) {
+	// Minimal backward scanning tail
+	stat, _ := f.Stat()
+	size := stat.Size()
+	if size == 0 {
+		return
+	}
+
+	bufSize := int64(4096)
+	if bufSize > size {
+		bufSize = size
+	}
+
+	buf := make([]byte, bufSize)
+	offset := size - bufSize
+	lines := 0
+	var finalData []byte
+
+	for offset >= 0 {
+		_, _ = f.Seek(offset, 0)
+		_, _ = io.ReadFull(f, buf)
+		
+		for i := len(buf) - 1; i >= 0; i-- {
+			if buf[i] == '\n' {
+				lines++
+				if lines > n {
+					finalData = append(buf[i+1:], finalData...)
+					_, _ = os.Stdout.Write(finalData)
+					return
+				}
+			}
+		}
+		finalData = append(buf, finalData...)
+		if offset == 0 {
+			break
+		}
+		offset -= bufSize
+		if offset < 0 {
+			bufSize += offset
+			offset = 0
+		}
+	}
+	_, _ = os.Stdout.Write(finalData)
 }
 
 func processInput(conn net.Conn, data []byte, pendingCtrlD *bool, detached *int32, readOnly bool) error {

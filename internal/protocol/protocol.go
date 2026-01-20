@@ -13,6 +13,7 @@ const (
 	TypeSignal Type = 0x03
 	TypeKick   Type = 0x04
 	TypeMode   Type = 0x05
+	TypeEnv    Type = 0x06
 )
 
 const (
