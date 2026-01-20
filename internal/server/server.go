@@ -7,7 +7,6 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
-	"strconv"
 	"sync"
 	"syscall"
 	"time"
@@ -36,11 +35,13 @@ func Run(name string, sockPath string, logPath string, customCmd string) error {
 			return err
 		}
 	}
-	logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_TRUNC|os.O_RDWR, 0600)
+	
+	// Use LogRotator
+	logger, err := NewLogRotator(name, logPath)
 	if err != nil {
 		return err
 	}
-	defer func() { _ = logFile.Close() }()
+	defer func() { _ = logger.Close() }()
 
 	// 1.5 Setup SSH Agent symlink
 	sshSymlink, _ := session.GetSSHSockPath(name)
@@ -129,9 +130,6 @@ func Run(name string, sockPath string, logPath string, customCmd string) error {
 		Clients: make(map[net.Conn]struct{}),
 	}
 
-	maxLogSize := int64(config.Global.LogRotationSizeMB) * 1024 * 1024
-	var logSize int64
-
 	// 4. Output Loop
 	go func() {
 		buf := make([]byte, 4096)
@@ -142,45 +140,9 @@ func Run(name string, sockPath string, logPath string, customCmd string) error {
 			}
 			data := buf[:n]
 			
-			if logSize > maxLogSize {
-				_ = logFile.Close()
-				
-				// Find highest index
-				files, _ := session.GetLogFiles(name)
-				maxIdx := 0
-				prefix := logPath + "."
-				for _, f := range files {
-					if len(f) > len(prefix) {
-						idx, _ := strconv.Atoi(f[len(prefix):])
-						if idx > maxIdx {
-							maxIdx = idx
-						}
-					}
-				}
-
-				nextIdx := maxIdx + 1
-				_ = os.Rename(logPath, fmt.Sprintf("%s.%d", logPath, nextIdx))
-				
-				// Cleanup old rotations if limit exceeded
-				if len(files) >= config.Global.MaxLogRotations {
-					// files[0] is the oldest
-					_ = os.Remove(files[0])
-				}
-
-				newFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_TRUNC|os.O_RDWR, 0600)
-				if err == nil {
-					logFile = newFile
-					logSize = 0
-				} else {
-					// Fallback: try to reopen original if rename failed or something
-					logFile, _ = os.OpenFile(logPath, os.O_CREATE|os.O_APPEND|os.O_RDWR, 0600)
-				}
-			}
-
-			wn, err := logFile.Write(data)
-			if err == nil {
-				logSize += int64(wn)
-			}
+			// Write to logger (handles rotation)
+			_, _ = logger.Write(data)
+			
 			srv.broadcast(data)
 		}
 		_ = l.Close()
@@ -263,7 +225,6 @@ func (s *Server) handleClient(conn net.Conn, ptmx *os.File) {
 	
 
 	s.Clients[conn] = struct{}{}
-
 	s.Lock.Unlock()
 
 
@@ -338,9 +299,9 @@ func (s *Server) handleClient(conn net.Conn, ptmx *os.File) {
 
 							_ = s.Cmd.Process.Signal(sig)
 
-						}
+							}
 
-					}
+						}
 
 				case protocol.TypeEnv:
 
@@ -363,5 +324,3 @@ func (s *Server) handleClient(conn net.Conn, ptmx *os.File) {
 			}
 
 		}
-
-		
