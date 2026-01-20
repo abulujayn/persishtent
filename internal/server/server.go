@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/creack/pty"
+	"persishtent/internal/config"
 	"persishtent/internal/protocol"
 	"persishtent/internal/session"
 )
@@ -69,7 +70,7 @@ func Run(name string, sockPath string, logPath string, customCmd string) error {
 	cmd.Env = append(os.Environ(), "TERM=xterm-256color", "PERSISHTENT_SESSION="+name)
 	
 	// Inject prompt prefix
-	promptPrefix := fmt.Sprintf("psh:%s ", name)
+	promptPrefix := fmt.Sprintf("%s:%s ", config.Global.PromptPrefix, name)
 	ps1 := os.Getenv("PS1")
 	if ps1 == "" {
 		// Default prompts often look like this
@@ -128,7 +129,7 @@ func Run(name string, sockPath string, logPath string, customCmd string) error {
 		Clients: make(map[net.Conn]struct{}),
 	}
 
-	const maxLogSize = 1024 * 1024 // 1MB
+	maxLogSize := int64(config.Global.LogRotationSizeMB) * 1024 * 1024
 	var logSize int64
 
 	// 4. Output Loop
@@ -161,7 +162,7 @@ func Run(name string, sockPath string, logPath string, customCmd string) error {
 				_ = os.Rename(logPath, fmt.Sprintf("%s.%d", logPath, nextIdx))
 				
 				// Cleanup old rotations if limit exceeded
-				if len(files) >= session.MaxLogRotations {
+				if len(files) >= config.Global.MaxLogRotations {
 					// files[0] is the oldest
 					_ = os.Remove(files[0])
 				}

@@ -8,7 +8,10 @@ import (
 	"syscall"
 	"time"
 
+	"golang.org/x/term"
+
 	"persishtent/internal/client"
+	"persishtent/internal/config"
 	"persishtent/internal/server"
 	"persishtent/internal/session"
 )
@@ -21,6 +24,11 @@ func checkNesting() {
 }
 
 func main() {
+	// Load config
+	if err := config.Load(); err != nil {
+		fmt.Printf("Warning: failed to load config: %v\n", err)
+	}
+
 	// Auto-prune stale sessions on every invocation
 	sessions, _, _ := session.Clean()
 
@@ -31,9 +39,9 @@ func main() {
 		} else if len(sessions) == 0 {
 			startSession(generateAutoName(), false, "", "", true, false, "")
 		} else {
-			fmt.Println("Multiple sessions active. Please specify one:")
-			for _, s := range sessions {
-				fmt.Printf("  %s (pid: %d, cmd: %s, up: %s)\n", s.Name, s.PID, s.Command, time.Since(s.StartTime).Round(time.Second))
+			name := selectSession(sessions)
+			if name != "" {
+				attachSession(name, "", true, false, 0)
 			}
 		}
 		return
@@ -88,11 +96,10 @@ func main() {
 				fmt.Println("No active sessions.")
 				return
 			} else {
-				fmt.Println("Multiple sessions active. Please specify one:")
-				for _, s := range sessions {
-					fmt.Printf("  %s (pid: %d, cmd: %s, up: %s)\n", s.Name, s.PID, s.Command, time.Since(s.StartTime).Round(time.Second))
+				name = selectSession(sessions)
+				if name == "" {
+					return
 				}
-				return
 			}
 		}
 		attachSession(name, *sock, !*noReplay, *readOnly, *tail)
@@ -169,6 +176,8 @@ func main() {
 		} else {
 			fmt.Printf("Cleaned up %d stale files.\n", count)
 		}
+	case "completion":
+		printCompletionScript()
 	case "help":
 		printHelp()
 	default:
@@ -314,6 +323,7 @@ func printHelp() {
 	fmt.Println("  persishtent <name>               Start or attach to session")
 	fmt.Println("  persishtent list (ls)            List active sessions")
 	fmt.Println("  persishtent clean                Clean up stale sessions and log files")
+	fmt.Println("  persishtent completion           Generate shell completion script")
 	fmt.Println("  persishtent start (s) [flags] [name]")
 	fmt.Println("    -d                             Start in detached mode")
 	fmt.Println("    -s <path>                      Custom socket path")
@@ -331,4 +341,105 @@ func printHelp() {
 	fmt.Println("Shortcuts:")
 	fmt.Println("  Ctrl+D, d                        Detach from session")
 	fmt.Println("  Ctrl+D, Ctrl+D                   Send Ctrl+D to session")
+}
+
+func printCompletionScript() {
+	script := `#!/bin/bash
+# Bash/Zsh completion for persishtent
+
+_persishtent_completions() {
+	local cur prev opts
+	COMPREPLY=()
+	cur="${COMP_WORDS[COMP_CWORD]}"
+	prev="${COMP_WORDS[COMP_CWORD-1]}"
+	opts="start attach list kill rename clean completion help"
+
+	case "${prev}" in
+		start|attach|kill|rename)
+			local sessions=$(persishtent list 2>/dev/null | grep "^  " | awk '{print $1}')
+			COMPREPLY=( $(compgen -W "${sessions}" -- ${cur}) )
+			return 0
+			;; 
+		*)
+			;;
+	esac
+
+	COMPREPLY=( $(compgen -W "${opts}" -- ${cur}) )
+}
+
+complete -F _persishtent_completions persishtent
+`
+	fmt.Print(script)
+}
+
+func selectSession(sessions []session.Info) string {
+	if !term.IsTerminal(int(os.Stdin.Fd())) {
+		// Fallback for non-interactive: print list and exit
+		fmt.Println("Multiple sessions active. Please specify one:")
+		for _, s := range sessions {
+			fmt.Printf("  %s (pid: %d, cmd: %s)\n", s.Name, s.PID, s.Command)
+		}
+		return ""
+	}
+
+	oldState, err := term.MakeRaw(int(os.Stdin.Fd()))
+	if err != nil {
+		return ""
+	}
+	defer func() { _ = term.Restore(int(os.Stdin.Fd()), oldState) }()
+
+	idx := 0
+	// Hide cursor
+	fmt.Print("\x1b[?25l")
+	defer fmt.Print("\x1b[?25h")
+
+	first := true
+	printList := func() {
+		if !first {
+			// Move up N+1 lines (N sessions + header)
+			fmt.Printf("\x1b[%dA", len(sessions)+1)
+		}
+		first = false
+		
+		fmt.Printf("Select a session (Up/Down/Enter/q):\r\n")
+		for i, s := range sessions {
+			prefix := "   "
+			if i == idx {
+				prefix = " > "
+			}
+			fmt.Printf("%s%s (pid: %d, cmd: %s)\x1b[K\r\n", prefix, s.Name, s.PID, s.Command)
+		}
+	}
+
+	printList()
+
+	buf := make([]byte, 3)
+	for {
+		n, err := os.Stdin.Read(buf)
+		if err != nil {
+			return ""
+		}
+		
+		if n == 1 {
+			if buf[0] == 3 || buf[0] == 4 || buf[0] == 113 { // Ctrl+C, Ctrl+D, q
+				return ""
+			}
+			if buf[0] == 13 || buf[0] == 10 { // Enter
+				return sessions[idx].Name
+			}
+		} else if n == 3 && buf[0] == 27 && buf[1] == 91 {
+			switch buf[2] {
+			case 65: // Up
+				if idx > 0 {
+					idx--
+					printList()
+				}
+			case 66: // Down
+				if idx < len(sessions)-1 {
+					idx++
+					printList()
+				}
+			}
+		}
+	}
 }
