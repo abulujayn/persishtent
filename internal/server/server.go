@@ -2,6 +2,7 @@ package server
 
 import (
 	"bytes"
+	"fmt"
 	"net"
 	"os"
 	"os/exec"
@@ -131,7 +132,14 @@ func Run(name string, sockPath string, logPath string, customCmd string) error {
 			
 			if logSize > maxLogSize {
 				_ = logFile.Close()
+				// Shift existing rotations
+				for i := session.MaxLogRotations - 1; i >= 1; i-- {
+					oldR := fmt.Sprintf("%s.%d", logPath, i)
+					newR := fmt.Sprintf("%s.%d", logPath, i+1)
+					_ = os.Rename(oldR, newR)
+				}
 				_ = os.Rename(logPath, logPath+".1")
+				
 				newFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_TRUNC|os.O_RDWR, 0600)
 				if err == nil {
 					logFile = newFile

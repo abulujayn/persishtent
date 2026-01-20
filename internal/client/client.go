@@ -3,6 +3,7 @@ package client
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"os"
@@ -70,19 +71,37 @@ func Attach(name string, sockPath string, replay bool, readOnly bool, tail int) 
 				logPath, _ = session.GetLogPath(name)
 			}
 	
-			if logPath != "" {
-				// Read rotated log first
-				rotatedPath := logPath + ".1"
-				if rf, err := os.Open(rotatedPath); err == nil {
-					if tail > 0 {
-						replayTail(os.Stdout, rf, tail)
-					} else {
-						_, _ = io.Copy(os.Stdout, rf)
-					}
-					_ = rf.Close()
-				}
+					if logPath != "" {
 	
-				if f, err := os.Open(logPath); err == nil {
+						// Read rotated logs oldest to newest
+	
+						for i := session.MaxLogRotations; i >= 1; i-- {
+	
+							rotatedPath := fmt.Sprintf("%s.%d", logPath, i)
+	
+							if rf, err := os.Open(rotatedPath); err == nil {
+	
+								if tail > 0 {
+	
+									replayTail(os.Stdout, rf, tail)
+	
+								} else {
+	
+									_, _ = io.Copy(os.Stdout, rf)
+	
+								}
+	
+								_ = rf.Close()
+	
+							}
+	
+						}
+	
+			
+	
+						if f, err := os.Open(logPath); err == nil {
+	
+			
 					if tail > 0 {
 						replayTail(os.Stdout, f, tail)
 					} else {

@@ -25,7 +25,8 @@ func ValidateName(name string) error {
 }
 
 const (
-	DirName = ".persishtent"
+	DirName          = ".persishtent"
+	MaxLogRotations = 5
 )
 
 // Info holds information about a persistent session
@@ -78,7 +79,9 @@ func Cleanup(name string) {
 	_ = os.Remove(filepath.Join(dir, name+".sock"))
 	_ = os.Remove(filepath.Join(dir, name+".info"))
 	_ = os.Remove(filepath.Join(dir, name+".log"))
-	_ = os.Remove(filepath.Join(dir, name+".log.1"))
+	for i := 1; i <= MaxLogRotations; i++ {
+		_ = os.Remove(filepath.Join(dir, fmt.Sprintf("%s.log.%d", name, i)))
+	}
 	_ = os.Remove(filepath.Join(dir, name+".ssh_auth_sock"))
 }
 
