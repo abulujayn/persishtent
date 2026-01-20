@@ -82,18 +82,35 @@ func TestIntegration(t *testing.T) {
 	
 	// Send command
 	markerFile := filepath.Join(tmpDir, "marker")
+	envFile := filepath.Join(tmpDir, "env_check")
 	_ = os.Remove(markerFile)
+	_ = os.Remove(envFile)
 	
 	cmdStr := "echo 'hello persistent' > " + markerFile + "\n"
 	if _, err := ptmx.Write([]byte(cmdStr)); err != nil {
 		t.Fatalf("Failed to write to ptmx: %v", err)
 	}
+
+	// Verify environment variable
+	envCmd := "echo $PERSISHTENT_SESSION > " + envFile + "\n"
+	if _, err := ptmx.Write([]byte(envCmd)); err != nil {
+		t.Fatalf("Failed to write env check to ptmx: %v", err)
+	}
 	
-time.Sleep(1 * time.Second)
+	time.Sleep(1 * time.Second)
 	
 	// Verify file exists
 	if _, err := os.Stat(markerFile); os.IsNotExist(err) {
 		t.Fatalf("Marker file was not created. Shell didn't execute command?")
+	}
+
+	// Verify PERSISHTENT_SESSION was set
+	envContent, err := os.ReadFile(envFile)
+	if err != nil {
+		t.Fatalf("Failed to read env check file: %v", err)
+	}
+	if string(bytes.TrimSpace(envContent)) != sessionName {
+		t.Fatalf("PERSISHTENT_SESSION mismatch. Got %s, want %s", string(envContent), sessionName)
 	}
 	
 	// Detach (Kill the attach command)

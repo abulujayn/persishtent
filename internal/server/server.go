@@ -67,6 +67,16 @@ func Run(name string, sockPath string, logPath string, customCmd string) error {
 	}
 	
 	cmd.Env = append(os.Environ(), "TERM=xterm-256color", "PERSISHTENT_SESSION="+name)
+	
+	// Inject prompt prefix
+	promptPrefix := fmt.Sprintf("psh:%s ", name)
+	ps1 := os.Getenv("PS1")
+	if ps1 == "" {
+		// Default prompts often look like this
+		ps1 = "[\\u@\\h \\W]\\$ "
+	}
+	cmd.Env = append(cmd.Env, "PS1="+promptPrefix+ps1)
+
 	if currentSSH != "" {
 		// Point the child to the stable symlink
 		cmd.Env = append(cmd.Env, "SSH_AUTH_SOCK="+sshSymlink)
