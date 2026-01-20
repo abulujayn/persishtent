@@ -12,7 +12,7 @@ func TestEnsureDir(t *testing.T) {
 	if err != nil {
 		t.Fatalf("EnsureDir failed: %v", err)
 	}
-	
+
 	info, err := os.Stat(path)
 	if err != nil {
 		t.Fatalf("Directory does not exist: %v", err)
@@ -24,29 +24,29 @@ func TestEnsureDir(t *testing.T) {
 
 func TestGetPaths(t *testing.T) {
 	name := "testsession"
-	
+
 	sockPath, err := GetSocketPath(name)
 	if err != nil {
 		t.Fatalf("GetSocketPath failed: %v", err)
 	}
-	
+
 	logPath, err := GetLogPath(name)
 	if err != nil {
 		t.Fatalf("GetLogPath failed: %v", err)
 	}
-	
+
 	home, _ := os.UserHomeDir()
 	expectedDir := filepath.Join(home, DirName)
-	
+
 	if filepath.Dir(sockPath) != expectedDir {
 		t.Errorf("Socket path dir mismatch. Got %s, want %s", filepath.Dir(sockPath), expectedDir)
 	}
-	
-	if filepath.Base(sockPath) != name + ".sock" {
+
+	if filepath.Base(sockPath) != name+".sock" {
 		t.Errorf("Socket filename mismatch. Got %s, want %s.sock", filepath.Base(sockPath), name)
 	}
 
-	if filepath.Base(logPath) != name + ".log" {
+	if filepath.Base(logPath) != name+".log" {
 		t.Errorf("Log filename mismatch. Got %s, want %s.log", filepath.Base(logPath), name)
 	}
 }
@@ -64,7 +64,7 @@ func TestSessionInfo(t *testing.T) {
 	if _, err := EnsureDir(); err != nil {
 		t.Fatalf("EnsureDir failed: %v", err)
 	}
-	
+
 	path, _ := GetInfoPath(name)
 	defer func() { _ = os.Remove(path) }()
 
@@ -111,7 +111,7 @@ func TestValidateName(t *testing.T) {
 func TestSessionRename(t *testing.T) {
 	oldName := "old-session"
 	newName := "new-session"
-	
+
 	Cleanup(oldName)
 	Cleanup(newName)
 	defer Cleanup(newName)
@@ -133,7 +133,7 @@ func TestSessionRename(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(dir, newName+".sock")); err != nil {
 		t.Errorf("New socket missing")
 	}
-	
+
 	newInfo, err := ReadInfo(newName)
 	if err != nil {
 		t.Fatalf("Failed to read new info: %v", err)
@@ -149,78 +149,82 @@ func TestIsAliveEdgeCases(t *testing.T) {
 		t.Errorf("Expected IsAlive to be false for PID -1")
 	}
 
-		info = Info{Name: "nosock", PID: os.Getpid()}
+	info = Info{Name: "nosock", PID: os.Getpid()}
+	if info.IsAlive() {
+		t.Errorf("Expected IsAlive to be false when socket is missing")
+	}
+}
 
-		if info.IsAlive() {
+func TestGetLogFiles(t *testing.T) {
+	name := "logtest"
+	Cleanup(name)
+	defer Cleanup(name)
 
-			t.Errorf("Expected IsAlive to be false when socket is missing")
+	dir, _ := EnsureDir()
+	// Create some files out of order
+	_ = os.WriteFile(filepath.Join(dir, name+".log.10"), []byte("10"), 0600)
+	_ = os.WriteFile(filepath.Join(dir, name+".log.2"), []byte("2"), 0600)
+	_ = os.WriteFile(filepath.Join(dir, name+".log"), []byte("active"), 0600)
 
-		}
-
+	files, err := GetLogFiles(name)
+	if err != nil {
+		t.Fatal(err)
 	}
 
-	
-
-	func TestGetLogFiles(t *testing.T) {
-
-		name := "logtest"
-
-		Cleanup(name)
-
-		defer Cleanup(name)
-
-	
-
-		dir, _ := EnsureDir()
-
-		// Create some files out of order
-
-		_ = os.WriteFile(filepath.Join(dir, name+".log.10"), []byte("10"), 0600)
-
-		_ = os.WriteFile(filepath.Join(dir, name+".log.2"), []byte("2"), 0600)
-
-		_ = os.WriteFile(filepath.Join(dir, name+".log"), []byte("active"), 0600)
-
-	
-
-		files, err := GetLogFiles(name)
-
-		if err != nil {
-
-			t.Fatal(err)
-
-		}
-
-	
-
-		if len(files) != 3 {
-
-			t.Fatalf("Expected 3 files, got %d", len(files))
-
-		}
-
-	
-
-		// Expected order: .log.2, .log.10, .log
-
-		if filepath.Base(files[0]) != name+".log.2" {
-
-			t.Errorf("Expected oldest to be .log.2, got %s", filepath.Base(files[0]))
-
-		}
-
-		if filepath.Base(files[1]) != name+".log.10" {
-
-			t.Errorf("Expected second oldest to be .log.10, got %s", filepath.Base(files[1]))
-
-		}
-
-		if filepath.Base(files[2]) != name+".log" {
-
-			t.Errorf("Expected newest to be .log, got %s", filepath.Base(files[2]))
-
-		}
-
+	if len(files) != 3 {
+		t.Fatalf("Expected 3 files, got %d", len(files))
 	}
 
+	// Expected order: .log.2, .log.10, .log
+	if filepath.Base(files[0]) != name+".log.2" {
+		t.Errorf("Expected oldest to be .log.2, got %s", filepath.Base(files[0]))
+	}
+	if filepath.Base(files[1]) != name+".log.10" {
+		t.Errorf("Expected second oldest to be .log.10, got %s", filepath.Base(files[1]))
+	}
+	if filepath.Base(files[2]) != name+".log" {
+		t.Errorf("Expected newest to be .log, got %s", filepath.Base(files[2]))
+	}
+}
+
+func TestClean(t *testing.T) {
+	name := "cleantest"
+	Cleanup(name)
+	defer Cleanup(name)
+
+	dir, _ := EnsureDir()
+
+	// Create some stale files
+	_ = os.WriteFile(filepath.Join(dir, name+".info"), []byte(`{"name":"cleantest","pid":999999}`), 0600)
+	_ = os.WriteFile(filepath.Join(dir, name+".sock"), []byte("sock"), 0600)
+	_ = os.WriteFile(filepath.Join(dir, name+".log"), []byte("log"), 0600)
+	_ = os.WriteFile(filepath.Join(dir, name+".log.1"), []byte("log1"), 0600)
+	_ = os.WriteFile(filepath.Join(dir, name+".ssh_auth_sock"), []byte("ssh"), 0600)
 	
+	// Create a file that should NOT be cleaned
+	otherFile := filepath.Join(dir, "keep_me.txt")
+	_ = os.WriteFile(otherFile, []byte("keep"), 0600)
+	defer func() { _ = os.Remove(otherFile) }()
+
+	count, err := Clean()
+	if err != nil {
+		t.Fatalf("Clean failed: %v", err)
+	}
+
+	if count < 5 {
+		t.Errorf("Expected at least 5 files to be cleaned, got %d", count)
+	}
+
+	// Verify files are gone
+	extensions := []string{".info", ".sock", ".log", ".log.1", ".ssh_auth_sock"}
+	for _, ext := range extensions {
+		if _, err := os.Stat(filepath.Join(dir, name+ext)); err == nil {
+			t.Errorf("File %s%s still exists after Clean", name, ext)
+		}
+	}
+
+	// Verify other file still exists
+	if _, err := os.Stat(otherFile); err != nil {
+		t.Errorf("File keep_me.txt was incorrectly cleaned")
+	}
+}

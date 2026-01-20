@@ -240,6 +240,74 @@ func ReadInfo(name string) (Info, error) {
 	return info, err
 }
 
+// Clean removes all stale sessions and orphaned files
+func Clean() (int, error) {
+	dir, err := EnsureDir()
+	if err != nil {
+		return 0, err
+	}
+
+	files, err := os.ReadDir(dir)
+	if err != nil {
+		return 0, err
+	}
+
+	// 1. Identify active sessions
+	active := make(map[string]bool)
+	for _, f := range files {
+		if filepath.Ext(f.Name()) == ".info" {
+			name := f.Name()[:len(f.Name())-5]
+			info, err := ReadInfo(name)
+			if err == nil && info.IsAlive() {
+				active[name] = true
+			}
+		}
+	}
+
+	// 2. Remove files not belonging to active sessions
+	removedCount := 0
+	for _, f := range files {
+		if f.IsDir() {
+			continue
+		}
+
+		name := f.Name()
+		var sessionName string
+		isSessionFile := false
+
+		if filepath.Ext(name) == ".sock" {
+			sessionName = name[:len(name)-5]
+			isSessionFile = true
+		} else if filepath.Ext(name) == ".info" {
+			sessionName = name[:len(name)-5]
+			isSessionFile = true
+		} else if len(name) > 14 && name[len(name)-14:] == ".ssh_auth_sock" {
+			sessionName = name[:len(name)-14]
+			isSessionFile = true
+		} else if filepath.Ext(name) == ".log" {
+			sessionName = name[:len(name)-4]
+			isSessionFile = true
+		} else {
+			// Handle rotated logs: name.log.N
+			// We look for ".log." inside the name
+			re := regexp.MustCompile(`^(.*)\.log\.\d+$`)
+			matches := re.FindStringSubmatch(name)
+			if len(matches) > 1 {
+				sessionName = matches[1]
+				isSessionFile = true
+			}
+		}
+
+		if isSessionFile && sessionName != "" && !active[sessionName] {
+			fullPath := filepath.Join(dir, name)
+			if err := os.Remove(fullPath); err == nil {
+				removedCount++
+			}
+		}
+	}
+	return removedCount, nil
+}
+
 // List returns a list of active sessions
 func List() ([]Info, error) {
 	dir, err := EnsureDir()

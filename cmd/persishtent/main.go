@@ -162,6 +162,13 @@ func main() {
 
 	case "list", "ls":
 		listSessions()
+	case "clean":
+		count, err := session.Clean()
+		if err != nil {
+			fmt.Printf("Error cleaning sessions: %v\n", err)
+		} else {
+			fmt.Printf("Cleaned up %d stale files.\n", count)
+		}
 	case "help":
 		printHelp()
 	default:
@@ -306,6 +313,7 @@ func printHelp() {
 	fmt.Println("  persishtent                      Start a new auto-named session")
 	fmt.Println("  persishtent <name>               Start or attach to session")
 	fmt.Println("  persishtent list (ls)            List active sessions")
+	fmt.Println("  persishtent clean                Clean up stale sessions and log files")
 	fmt.Println("  persishtent start (s) [flags] [name]")
 	fmt.Println("    -d                             Start in detached mode")
 	fmt.Println("    -s <path>                      Custom socket path")
