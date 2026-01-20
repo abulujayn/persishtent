@@ -38,3 +38,21 @@ func TestResizePayload(t *testing.T) {
 		t.Errorf("Resize decode failed. Got %d,%d, want %d,%d", r, c, rows, cols)
 	}
 }
+
+func FuzzReadPacket(f *testing.F) {
+	// Add some valid seeds
+	f.Add([]byte{0x01, 0, 0, 0, 5, 'h', 'e', 'l', 'l', 'o'})
+	f.Add([]byte{0x02, 0, 0, 0, 4, 0, 24, 0, 80})
+	
+	f.Fuzz(func(t *testing.T, data []byte) {
+		r := bytes.NewReader(data)
+		_, _, _ = ReadPacket(r)
+	})
+}
+
+func FuzzDecodeResizePayload(f *testing.F) {
+	f.Add([]byte{0, 24, 0, 80})
+	f.Fuzz(func(t *testing.T, data []byte) {
+		_, _ = DecodeResizePayload(data)
+	})
+}

@@ -15,8 +15,16 @@ const (
 	TypeMode   Type = 0x05
 )
 
+const (
+	// MaxPayloadSize is the maximum allowed size for a single packet payload (64KB).
+	MaxPayloadSize = 64 * 1024
+)
+
 // WritePacket writes a typed packet with a payload to the writer.
 func WritePacket(w io.Writer, t Type, payload []byte) error {
+	if len(payload) > MaxPayloadSize {
+		return io.ErrShortBuffer
+	}
 	// Header: Type (1) + Length (4)
 	header := make([]byte, 5)
 	header[0] = byte(t)
@@ -43,6 +51,10 @@ func ReadPacket(r io.Reader) (Type, []byte, error) {
 	t := Type(header[0])
 	length := binary.BigEndian.Uint32(header[1:])
 	
+	if length > MaxPayloadSize {
+		return 0, nil, io.ErrUnexpectedEOF
+	}
+
 	payload := make([]byte, length)
 	if length > 0 {
 		if _, err := io.ReadFull(r, payload); err != nil {
