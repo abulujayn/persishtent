@@ -178,6 +178,12 @@ func main() {
 		}
 	case "completion":
 		printCompletionScript()
+	case "init":
+		if len(os.Args) < 3 {
+			fmt.Println("Usage: persishtent init <bash|zsh>")
+			return
+		}
+		printInitScript(os.Args[2])
 	case "help":
 		printHelp()
 	default:
@@ -324,6 +330,7 @@ func printHelp() {
 	fmt.Println("  persishtent list (ls)            List active sessions")
 	fmt.Println("  persishtent clean                Clean up stale sessions and log files")
 	fmt.Println("  persishtent completion           Generate shell completion script")
+	fmt.Println("  persishtent init <shell>         Generate shell integration script (bash|zsh)")
 	fmt.Println("  persishtent start (s) [flags] [name]")
 	fmt.Println("    -d                             Start in detached mode")
 	fmt.Println("    -s <path>                      Custom socket path")
@@ -352,7 +359,7 @@ _persishtent_completions() {
 	COMPREPLY=()
 	cur="${COMP_WORDS[COMP_CWORD]}"
 	prev="${COMP_WORDS[COMP_CWORD-1]}"
-	opts="start attach list kill rename clean completion help"
+	opts="start attach list kill rename clean completion init help"
 
 	case "${prev}" in
 		start|attach|kill|rename)
@@ -370,6 +377,23 @@ _persishtent_completions() {
 complete -F _persishtent_completions persishtent
 `
 	fmt.Print(script)
+}
+
+func printInitScript(shell string) {
+	switch shell {
+	case "bash":
+		fmt.Println("if [ -n \"$PERSISHTENT_SESSION\" ]; then")
+		fmt.Println("    PROMPT_COMMAND='echo -ne \"\\033]0;persishtent: ${PERSISHTENT_SESSION}\\007\"'")
+		fmt.Println("fi")
+	case "zsh":
+		fmt.Println("if [ -n \"$PERSISHTENT_SESSION\" ]; then")
+		fmt.Println("    precmd() {")
+		fmt.Println("        print -Pn \"\\e]0;persishtent: ${PERSISHTENT_SESSION}\\a\"")
+		fmt.Println("    }")
+		fmt.Println("fi")
+	default:
+		fmt.Printf("# Unsupported shell: %s\n", shell)
+	}
 }
 
 func selectSession(sessions []session.Info) string {

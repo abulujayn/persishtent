@@ -10,6 +10,7 @@ type Config struct {
 	LogRotationSizeMB int    `json:"log_rotation_size_mb"`
 	MaxLogRotations   int    `json:"max_log_rotations"`
 	PromptPrefix      string `json:"prompt_prefix"`
+	DetachKey         string `json:"detach_key"`
 }
 
 var Global Config
@@ -20,6 +21,7 @@ func init() {
 		LogRotationSizeMB: 1,
 		MaxLogRotations:   5,
 		PromptPrefix:      "psh",
+		DetachKey:         "ctrl-d",
 	}
 }
 

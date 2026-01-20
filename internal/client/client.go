@@ -7,11 +7,13 @@ import (
 	"net"
 	"os"
 	"os/signal"
+	"strings"
 	"sync/atomic"
 	"syscall"
 	"time"
 
 	"golang.org/x/term"
+	"persishtent/internal/config"
 	"persishtent/internal/protocol"
 	"persishtent/internal/session"
 )
@@ -28,6 +30,8 @@ func Attach(name string, sockPath string, replay bool, readOnly bool, tail int) 
 			return err
 		}
 	}
+
+	detachByte := parseDetachKey(config.Global.DetachKey)
 
 	// 1. Connect
 	conn, err := net.Dial("unix", sockPath)
@@ -59,323 +63,281 @@ func Attach(name string, sockPath string, replay bool, readOnly bool, tail int) 
 	}
 	defer func() { _ = term.Restore(int(os.Stdin.Fd()), oldState) }()
 
-			// 3. Replay Log
-
-			if replay {
-
-				logFiles, _ := session.GetLogFiles(name)
-
-				for _, lp := range logFiles {
-
-					f, err := os.Open(lp)
-
-					if err == nil {
-
-						if tail > 0 {
-
-							replayTail(os.Stdout, f, tail)
-
-						} else {
-
-							_, _ = io.Copy(os.Stdout, f)
-
-						}
-
-						_ = f.Close()
-
-					}
-
+	// 3. Replay Log
+	if replay {
+		logFiles, _ := session.GetLogFiles(name)
+		for _, lp := range logFiles {
+			f, err := os.Open(lp)
+			if err == nil {
+				if tail > 0 {
+					replayTail(os.Stdout, f, tail)
+				} else {
+					_, _ = io.Copy(os.Stdout, f)
 				}
-
+				_ = f.Close()
 			}
+		}
+	}
 
-		
-			    // 4. Sync Terminal (Drain responses)
-		    // Send Device Status Report (DSR) request.
-		    _, _ = os.Stdout.Write([]byte("\x1b[6n"))
-		
-		    // We use a dedicated channel for Stdin to allow select with timeout
-		    stdinCh := make(chan []byte)
-		    go func() {
-		        buf := make([]byte, 1024)
-		        for {
-		            n, err := os.Stdin.Read(buf)
-		            if n > 0 {
-		                tmp := make([]byte, n)
-		                copy(tmp, buf[:n])
-		                stdinCh <- tmp
-		            }
-		            if err != nil {
-		                close(stdinCh)
-		                return
-		            }
-		        }
-		    }()
-		
-		    // Drain Phase
-		    var drainBuf []byte
-		    deadline := time.After(1000 * time.Millisecond)
-		    inactivity := time.NewTimer(250 * time.Millisecond)
-		    defer inactivity.Stop()
-		
-		    var pendingCtrlD bool
-		    var detached int32
-		
-		DrainLoop:
-		    for {
-		        select {
-		        case chunk, ok := <-stdinCh:
-		            if !ok {
-		                return nil // Stdin closed
-		            }
-		            drainBuf = append(drainBuf, chunk...)
-		
-		            for {
-		                seqLen := matchTerminalResponse(drainBuf)
-		                if seqLen <= 0 {
-		                    break
-		                }
-		
-		                // Found a response!
-		                // 1. Forward anything BEFORE the sequence (unlikely but possible)
-		                escIdx := bytes.Index(drainBuf, []byte("\x1b"))
-		                if escIdx > 0 {
-		                    if err := processInput(conn, drainBuf[:escIdx], &pendingCtrlD, &detached, readOnly); err != nil {
-		                        return nil
-		                    }
-		                }
-		
-		                // 2. Swallow the sequence
-		                drainBuf = drainBuf[escIdx+seqLen:]
-		
-		                // Reset inactivity timer
-		                if !inactivity.Stop() {
-		                    select {
-		                    case <-inactivity.C:
-		                    default:
-		                    }
-		                }
-		                inactivity.Reset(100 * time.Millisecond)
-		            }
-		
-		            // If we have data that is definitely NOT part of an escape sequence,
-		            // we can forward it.
-		            if len(drainBuf) > 0 && !bytes.Contains(drainBuf, []byte("\x1b")) {
-		                if err := processInput(conn, drainBuf, &pendingCtrlD, &detached, readOnly); err != nil {
-		                    return nil
-		                }
-		                drainBuf = nil
-		            }
-		
-		            // Safety limit
-		            if len(drainBuf) > 4096 {
-		                if err := processInput(conn, drainBuf, &pendingCtrlD, &detached, readOnly); err != nil {
-		                    return nil
-		                }
-		                drainBuf = nil
-		                break DrainLoop
-		            }
-		        case <-inactivity.C:
-		            break DrainLoop
-		        case <-deadline:
-		            break DrainLoop
-		        }
-		    }
-		
-		    // Flush remaining
-		    if len(drainBuf) > 0 {
-		        if err := processInput(conn, drainBuf, &pendingCtrlD, &detached, readOnly); err != nil {
-		            return nil
-		        }
-		    }
-		
-		    // 5. Initial Resize
-		    if !readOnly {
-		        sendResize(conn)
-		    }
-		
-		    // 6. Handle Resize Signals
-		    if !readOnly {
-		        sigCh := make(chan os.Signal, 1)
-		        signal.Notify(sigCh, syscall.SIGWINCH)
-		        go func() {
-		            for range sigCh {
-		                sendResize(conn)
-		            }
-		        }()
-		    }
-		
-		    // 7. Stdin -> Socket (Main Loop)
-		    // We continue reading from stdinCh
-		    go func() {
-		        for chunk := range stdinCh {
-		            if err := processInput(conn, chunk, &pendingCtrlD, &detached, readOnly); err != nil {
-		                return
-		            }
-		        }
-		    }()
-		
-		    // 8. Socket -> Stdout
-		    for {
-		        t, payload, err := protocol.ReadPacket(conn)
-		        if err != nil {
-		            if atomic.LoadInt32(&detached) == 1 {
-		                restoreTerminal()
-		                return ErrDetached
-		            }
-		            return nil
-		        }
-		        switch t {
-		        case protocol.TypeData:
-		            _, _ = os.Stdout.Write(payload)
-		        case protocol.TypeKick:
-		            restoreTerminal()
-		            return ErrKicked
-		        }
-		    }
-		}
-		
-		// restoreTerminal sends escape sequences to reset terminal modes that might have been
-		// enabled by applications inside the session (e.g. alternate buffer, mouse tracking).
-		func restoreTerminal() {
-		    // \x1b[m       : Reset colors/attributes
-		    // \x1b[?1049l : Exit alternate buffer
-		    // \x1b[?1000l... : Disable mouse tracking
-		    // \x1b[?2004l : Disable bracketed paste
-		    // \x1b[?25h   : Show cursor
-		    // \x1b[H\x1b[2J : Clear screen
-		    _, _ = os.Stdout.Write([]byte("\x1b[m\x1b[?1049l\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l\x1b[?2004l\x1b[?25h\x1b[H\x1b[2J"))
-		}
-		
-		func replayTail(w io.Writer, f *os.File, n int) {
-		
-			// Minimal backward scanning tail
-		
-			stat, _ := f.Stat()
-		
-			size := stat.Size()
-		
-			if size == 0 {
-		
+	// 4. Sync Terminal (Drain responses)
+	// Send Device Status Report (DSR) request.
+	_, _ = os.Stdout.Write([]byte("\x1b[6n"))
+
+	// We use a dedicated channel for Stdin to allow select with timeout
+	stdinCh := make(chan []byte)
+	go func() {
+		buf := make([]byte, 1024)
+		for {
+			n, err := os.Stdin.Read(buf)
+			if n > 0 {
+				tmp := make([]byte, n)
+				copy(tmp, buf[:n])
+				stdinCh <- tmp
+			}
+			if err != nil {
+				close(stdinCh)
 				return
-		
 			}
-		
-		
-		
-			bufSize := int64(4096)
-		
-			if bufSize > size {
-		
-				bufSize = size
-		
-			}
-		
-		
-		
-			buf := make([]byte, bufSize)
-		
-			offset := size - bufSize
-		
-			lines := 0
-		
-			var finalData []byte
-		
-		
-		
-			for offset >= 0 {
-		
-				_, _ = f.Seek(offset, 0)
-		
-				_, _ = io.ReadFull(f, buf)
-		
-				
-		
-				for i := len(buf) - 1; i >= 0; i-- {
-		
-					if buf[i] == '\n' {
-		
-						// Skip the very last character if it's a newline
-		
-						if offset+int64(i) == size-1 {
-		
-							continue
-		
-						}
-		
-						lines++
-		
-						if lines >= n {
-		
-							finalData = append(buf[i+1:], finalData...)
-		
-							_, _ = w.Write(finalData)
-		
-							return
-		
-						}
-		
-					}
-		
-				}
-		
-				finalData = append(buf, finalData...)
-		
-				if offset == 0 {
-		
-					break
-		
-				}
-		
-				offset -= bufSize
-		
-				if offset < 0 {
-		
-					bufSize += offset
-		
-					offset = 0
-		
-				}
-		
-			}
-		
-			_, _ = w.Write(finalData)
-		
 		}
-		
-		
-		
-		
-func processInput(conn net.Conn, data []byte, pendingCtrlD *bool, detached *int32, readOnly bool) error {
+	}()
+
+	// Drain Phase
+	var drainBuf []byte
+	deadline := time.After(1000 * time.Millisecond)
+	inactivity := time.NewTimer(250 * time.Millisecond)
+	defer inactivity.Stop()
+
+	var pendingPrefix bool
+	var detached int32
+
+DrainLoop:
+	for {
+		select {
+		case chunk, ok := <-stdinCh:
+			if !ok {
+				return nil // Stdin closed
+			}
+			drainBuf = append(drainBuf, chunk...)
+
+			for {
+				seqLen := matchTerminalResponse(drainBuf)
+				if seqLen <= 0 {
+					break
+				}
+
+				// Found a response!
+				// 1. Forward anything BEFORE the sequence (unlikely but possible)
+				escIdx := bytes.Index(drainBuf, []byte("\x1b"))
+				if escIdx > 0 {
+					if err := processInput(conn, drainBuf[:escIdx], &pendingPrefix, &detached, readOnly, detachByte); err != nil {
+						return nil
+					}
+				}
+
+				// 2. Swallow the sequence
+			drainBuf = drainBuf[escIdx+seqLen:]
+
+				// Reset inactivity timer
+			if !inactivity.Stop() {
+					select {
+					case <-inactivity.C:
+					default:
+					}
+				}
+				inactivity.Reset(100 * time.Millisecond)
+			}
+
+			// If we have data that is definitely NOT part of an escape sequence,
+			// we can forward it.
+			if len(drainBuf) > 0 && !bytes.Contains(drainBuf, []byte("\x1b")) {
+				if err := processInput(conn, drainBuf, &pendingPrefix, &detached, readOnly, detachByte); err != nil {
+					return nil
+				}
+				drainBuf = nil
+			}
+
+			// Safety limit
+			if len(drainBuf) > 4096 {
+				if err := processInput(conn, drainBuf, &pendingPrefix, &detached, readOnly, detachByte); err != nil {
+					return nil
+				}
+				drainBuf = nil
+				break DrainLoop
+			}
+		case <-inactivity.C:
+			break DrainLoop
+		case <-deadline:
+			break DrainLoop
+		}
+	}
+
+	// Flush remaining
+	if len(drainBuf) > 0 {
+		if err := processInput(conn, drainBuf, &pendingPrefix, &detached, readOnly, detachByte); err != nil {
+			return nil
+		}
+	}
+
+	// 5. Initial Resize
+	if !readOnly {
+		sendResize(conn)
+	}
+
+	// 6. Handle Resize Signals
+	if !readOnly {
+		sigCh := make(chan os.Signal, 1)
+		signal.Notify(sigCh, syscall.SIGWINCH)
+		go func() {
+			for range sigCh {
+				sendResize(conn)
+			}
+		}()
+	}
+
+	// 7. Stdin -> Socket (Main Loop)
+	// We continue reading from stdinCh
+	go func() {
+		for chunk := range stdinCh {
+			if err := processInput(conn, chunk, &pendingPrefix, &detached, readOnly, detachByte); err != nil {
+				return
+			}
+		}
+	}()
+
+	// 8. Socket -> Stdout
+	for {
+		t, payload, err := protocol.ReadPacket(conn)
+		if err != nil {
+			if atomic.LoadInt32(&detached) == 1 {
+				restoreTerminal()
+				return ErrDetached
+			}
+			return nil
+		}
+		switch t {
+		case protocol.TypeData:
+			_, _ = os.Stdout.Write(payload)
+		case protocol.TypeKick:
+			restoreTerminal()
+			return ErrKicked
+		}
+	}
+}
+
+// restoreTerminal sends escape sequences to reset terminal modes that might have been
+// enabled by applications inside the session (e.g. alternate buffer, mouse tracking).
+func restoreTerminal() {
+	// \x1b[m       : Reset colors/attributes
+	// \x1b[?1049l : Exit alternate buffer
+	// \x1b[?1000l... : Disable mouse tracking
+	// \x1b[?2004l : Disable bracketed paste
+	// \x1b[?25h   : Show cursor
+	// \x1b[H\x1b[2J : Clear screen
+	_, _ = os.Stdout.Write([]byte("\x1b[m\x1b[?1049l\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l\x1b[?2004l\x1b[?25h\x1b[H\x1b[2J"))
+}
+
+func replayTail(w io.Writer, f *os.File, n int) {
+	// Minimal backward scanning tail
+	stat, _ := f.Stat()
+	size := stat.Size()
+	if size == 0 {
+		return
+	}
+
+	bufSize := int64(4096)
+	if bufSize > size {
+		bufSize = size
+	}
+
+	buf := make([]byte, bufSize)
+	offset := size - bufSize
+	lines := 0
+	var finalData []byte
+
+	for offset >= 0 {
+		_, _ = f.Seek(offset, 0)
+		_, _ = io.ReadFull(f, buf)
+
+		for i := len(buf) - 1; i >= 0; i-- {
+			if buf[i] == '\n' {
+				// Skip the very last character if it's a newline
+				if offset+int64(i) == size-1 {
+					continue
+				}
+				lines++
+				if lines >= n {
+					finalData = append(buf[i+1:], finalData...)
+					_, _ = w.Write(finalData)
+					return
+				}
+			}
+		}
+		finalData = append(buf, finalData...)
+		if offset == 0 {
+			break
+		}
+		offset -= bufSize
+		if offset < 0 {
+			bufSize += offset
+			offset = 0
+		}
+	}
+	_, _ = w.Write(finalData)
+}
+
+func parseDetachKey(key string) byte {
+	key = strings.ToLower(key)
+	if len(key) >= 6 && key[:5] == "ctrl-" {
+		c := key[5]
+		if c >= 'a' && c <= 'z' {
+			return byte(c - 'a' + 1)
+		}
+		switch c {
+		case '[':
+			return 27
+		case '\\':
+			return 28
+		case ']':
+			return 29
+		case '^':
+			return 30
+		case '_':
+			return 31
+		}
+	}
+	return 0x04 // default ctrl-d
+}
+
+func processInput(conn net.Conn, data []byte, pendingPrefix *bool, detached *int32, readOnly bool, detachByte byte) error {
 	for _, b := range data {
-		if *pendingCtrlD {
-			*pendingCtrlD = false
+		if *pendingPrefix {
+			*pendingPrefix = false
 			switch b {
 			case 'd':
-				// Ctrl+D, d -> Detach
+				// Prefix, d -> Detach
 				atomic.StoreInt32(detached, 1)
 				_ = conn.Close()
 				return io.EOF // signal stop
-			case 0x04:
+			case detachByte:
 				if readOnly {
 					continue
 				}
-				// Ctrl+D, Ctrl+D -> Send single Ctrl+D
-				if err := protocol.WritePacket(conn, protocol.TypeData, []byte{0x04}); err != nil {
+				// Prefix, Prefix -> Send single Prefix
+				if err := protocol.WritePacket(conn, protocol.TypeData, []byte{detachByte}); err != nil {
 					return err
 				}
 			default:
 				if readOnly {
 					continue
 				}
-				// Ctrl+D, <other> -> Send Ctrl+D then <other>
-				if err := protocol.WritePacket(conn, protocol.TypeData, []byte{0x04, b}); err != nil {
+				// Prefix, <other> -> Send Prefix then <other>
+				if err := protocol.WritePacket(conn, protocol.TypeData, []byte{detachByte, b}); err != nil {
 					return err
 				}
 			}
 		} else {
-			if b == 0x04 {
-				*pendingCtrlD = true
+			if b == detachByte {
+				*pendingPrefix = true
 			} else {
 				if readOnly {
 					continue

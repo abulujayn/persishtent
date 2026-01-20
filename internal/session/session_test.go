@@ -240,7 +240,7 @@ func TestClean(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create mock socket: %v", err)
 	}
-	defer l.Close()
+	defer func() { _ = l.Close() }()
 	
 	activeInfo := Info{
 		Name: activeName,
