@@ -24,10 +24,16 @@ func TestIntegration(t *testing.T) {
 	// Create a fake home directory for isolation
 	fakeHome := t.TempDir()
 	
-	// Helper to run commands with fake HOME
+	// Helper to run commands with fake HOME and without nesting blocks
 	prepareCmd := func(name string, args ...string) *exec.Cmd {
 		c := exec.Command(name, args...)
-		c.Env = append(os.Environ(), "HOME="+fakeHome)
+		for _, env := range os.Environ() {
+			if !bytes.HasPrefix([]byte(env), []byte("PERSISHTENT_SESSION=")) &&
+				!bytes.HasPrefix([]byte(env), []byte("HOME=")) {
+				c.Env = append(c.Env, env)
+			}
+		}
+		c.Env = append(c.Env, "HOME="+fakeHome)
 		return c
 	}
 	
@@ -39,7 +45,6 @@ func TestIntegration(t *testing.T) {
 
 	// Pre-fill log to test truncation
 	garbage := []byte("OLD_SESSION_DATA_SHOULD_BE_GONE")
-	// We need to ensure the dir exists first
 	if err := os.MkdirAll(filepath.Dir(logPath), 0700); err != nil {
 		t.Fatalf("Failed to create config dir: %v", err)
 	}
@@ -48,14 +53,10 @@ func TestIntegration(t *testing.T) {
 	}
 
 	// Start Session (detached)
-	startCmd := prepareCmd(binPath, "start", sessionName)
-	
-	// Use pty to start the client
-	ptmx, err := pty.Start(startCmd)
-	if err != nil {
-		t.Fatalf("Failed to start client with PTY: %v", err)
+	startCmd := prepareCmd(binPath, "start", "-d", sessionName)
+	if out, err := startCmd.CombinedOutput(); err != nil {
+		t.Fatalf("Failed to start session: %v, out: %s", err, out)
 	}
-	defer func() { _ = ptmx.Close() }()
 	
 	// Give it a moment to initialize
 	time.Sleep(2 * time.Second)
@@ -65,37 +66,42 @@ func TestIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to read log file: %v", err)
 	}
-	// Check if garbage is gone
-	for i := 0; i < len(content)-len(garbage)+1; i++ {
-		if string(content[i:i+len(garbage)]) == string(garbage) {
-			t.Fatalf("Log file contains old data! Truncation failed.")
-		}
+	if bytes.Contains(content, garbage) {
+		t.Fatalf("Log file contains old data! Truncation failed. Content: %s", string(content))
 	}
+	
+	// Attach
+	attachCmd := prepareCmd(binPath, "attach", sessionName)
+	ptmx, err := pty.Start(attachCmd)
+	if err != nil {
+		t.Fatalf("Failed to attach with PTY: %v", err)
+	}
+	defer func() { _ = ptmx.Close() }()
+	
+	time.Sleep(1 * time.Second)
 	
 	// Send command
 	markerFile := filepath.Join(tmpDir, "marker")
 	_ = os.Remove(markerFile)
 	
-	// Command: echo 'hello persistent' > markerFile
-	// This will now write to the history in fakeHome/.bash_history
 	cmdStr := "echo 'hello persistent' > " + markerFile + "\n"
 	if _, err := ptmx.Write([]byte(cmdStr)); err != nil {
 		t.Fatalf("Failed to write to ptmx: %v", err)
 	}
 	
-	time.Sleep(1 * time.Second)
+time.Sleep(1 * time.Second)
 	
 	// Verify file exists
 	if _, err := os.Stat(markerFile); os.IsNotExist(err) {
 		t.Fatalf("Marker file was not created. Shell didn't execute command?")
 	}
 	
-	// Now Detach (Kill the client process)
-	if err := startCmd.Process.Kill(); err != nil {
-		t.Logf("Failed to kill client: %v", err)
+	// Detach (Kill the attach command)
+	if err := attachCmd.Process.Kill(); err != nil {
+		t.Logf("Failed to kill attach process: %v", err)
 	}
 	
-	time.Sleep(500 * time.Millisecond)
+time.Sleep(500 * time.Millisecond)
 	
 	// Verify socket still exists (daemon alive)
 	if _, err := os.Stat(sockPath); os.IsNotExist(err) {
@@ -103,24 +109,31 @@ func TestIntegration(t *testing.T) {
 	}
 	
 	// Attach again
-	attachCmd := prepareCmd(binPath, "attach", sessionName)
-	
-	attachPtmx, err := pty.Start(attachCmd)
+	attachCmd2 := prepareCmd(binPath, "attach", sessionName)
+	ptmx2, err := pty.Start(attachCmd2)
 	if err != nil {
-		t.Fatalf("Failed to start attach with PTY: %v", err)
+		t.Fatalf("Failed to re-attach with PTY: %v", err)
 	}
-	defer func() { _ = attachPtmx.Close() }()
+	defer func() { _ = ptmx2.Close() }()
 	
 	time.Sleep(1 * time.Second)
 	// Exit the shell
-	if _, err := attachPtmx.Write([]byte("exit\n")); err != nil {
+	if _, err := ptmx2.Write([]byte("exit\n")); err != nil {
 		t.Logf("Failed to write exit: %v", err)
 	}
 	
-	_ = attachCmd.Wait()
+	_ = attachCmd2.Wait()
 	
-	time.Sleep(1 * time.Second)
-	if _, err := os.Stat(sockPath); err == nil {
+	// Check if socket is gone (with retry)
+	gone := false
+	for i := 0; i < 20; i++ {
+		if _, err := os.Stat(sockPath); os.IsNotExist(err) {
+			gone = true
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	if !gone {
 		t.Fatalf("Socket still exists after exit command.")
 	}
 
@@ -144,18 +157,14 @@ func TestIntegration(t *testing.T) {
 		t.Fatalf("Failed to run kill command: %v, output: %s", err, out)
 	}
 	
-	// Trigger lazy cleanup by running list
-	listCheckCmd := prepareCmd(binPath, "list")
-	_, _ = listCheckCmd.CombinedOutput()
-
 	// Verify it is gone (with retry)
-	gone := false
+	gone = false
 	for i := 0; i < 20; i++ {
 		if _, err := os.Stat(killSockPath); os.IsNotExist(err) {
 			gone = true
 			break
 		}
-		// Try triggering list again
+		// Run list to trigger lazy cleanup
 		_, _ = prepareCmd(binPath, "list").CombinedOutput()
 		time.Sleep(100 * time.Millisecond)
 	}
@@ -164,14 +173,12 @@ func TestIntegration(t *testing.T) {
 	}
 
 	// --- Test Nesting Protection ---
-	// 1. List should NOT fail
 	listCmd := prepareCmd(binPath, "list")
 	listCmd.Env = append(listCmd.Env, "PERSISHTENT_SESSION=fake")
 	if out, err := listCmd.CombinedOutput(); err != nil {
 		t.Fatalf("List command failed inside nested session: %v, out: %s", err, out)
 	}
 
-	// 2. Start should FAIL
 	nestCmd := prepareCmd(binPath, "start", "nested-session")
 	nestCmd.Env = append(nestCmd.Env, "PERSISHTENT_SESSION=fake")
 	out, err := nestCmd.CombinedOutput()

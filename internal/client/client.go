@@ -102,21 +102,51 @@ DrainLoop:
 				return nil // Stdin closed
 			}
 			drainBuf = append(drainBuf, chunk...)
-			
-			// Check for CPR: \x1b [ ... R
-			if idx := bytes.IndexByte(drainBuf, 'R'); idx >= 0 {
-				if escIdx := bytes.LastIndexByte(drainBuf[:idx], 0x1b); escIdx >= 0 {
-					// Found CPR, discard it and everything before
-					remainder := drainBuf[idx+1:]
-					if len(remainder) > 0 {
-						if err := processInput(conn, remainder, &pendingCtrlD, &detached, readOnly); err != nil {
-							return nil
-						}
-					}
-					break DrainLoop
+
+			for {
+				// Look for terminal responses: ESC [ ... R (CPR) or ESC [ ... c (DA)
+				idxR := bytes.IndexByte(drainBuf, 'R')
+				idxC := bytes.IndexByte(drainBuf, 'c')
+
+				idx := -1
+				if idxR >= 0 && (idxC < 0 || idxR < idxC) {
+					idx = idxR
+				} else if idxC >= 0 {
+					idx = idxC
 				}
+
+				if idx >= 0 {
+					// Check if it's an escape sequence ESC [
+					if escIdx := bytes.LastIndex(drainBuf[:idx], []byte("\x1b[")); escIdx >= 0 {
+						// 1. Forward everything BEFORE the escape sequence
+						if escIdx > 0 {
+							if err := processInput(conn, drainBuf[:escIdx], &pendingCtrlD, &detached, readOnly); err != nil {
+								return nil
+							}
+						}
+
+						// 2. Check if it's our CPR sentinel
+						isCPR := (drainBuf[idx] == 'R')
+
+						// 3. Swallow the response and continue
+						drainBuf = drainBuf[idx+1:]
+						if isCPR {
+							// Stop draining once we hit our sentinel
+							if len(drainBuf) > 0 {
+								if err := processInput(conn, drainBuf, &pendingCtrlD, &detached, readOnly); err != nil {
+									return nil
+								}
+							}
+							break DrainLoop
+						}
+						continue
+					}
+				}
+				// No more identifiable terminal responses in current buffer
+				break
 			}
-			// Safety limit
+
+			// Safety limit: if buffer grows too large without a sentinel, flush and stop
 			if len(drainBuf) > 2048 {
 				if err := processInput(conn, drainBuf, &pendingCtrlD, &detached, readOnly); err != nil {
 					return nil
@@ -165,8 +195,7 @@ DrainLoop:
 		t, payload, err := protocol.ReadPacket(conn)
 		if err != nil {
 			if atomic.LoadInt32(&detached) == 1 {
-				// Exit alternate buffer and clear screen
-				_, _ = os.Stdout.Write([]byte("\x1b[?1049l\x1b[H\x1b[2J"))
+				restoreTerminal()
 				return ErrDetached
 			}
 			return nil
@@ -175,11 +204,22 @@ DrainLoop:
 		case protocol.TypeData:
 			_, _ = os.Stdout.Write(payload)
 		case protocol.TypeKick:
-			// Restore terminal state
-			_, _ = os.Stdout.Write([]byte("\x1b[?1049l\x1b[H\x1b[2J"))
+			restoreTerminal()
 			return ErrKicked
 		}
 	}
+}
+
+// restoreTerminal sends escape sequences to reset terminal modes that might have been
+// enabled by applications inside the session (e.g. alternate buffer, mouse tracking).
+func restoreTerminal() {
+	// \x1b[m       : Reset colors/attributes
+	// \x1b[?1049l : Exit alternate buffer
+	// \x1b[?1000l... : Disable mouse tracking
+	// \x1b[?2004l : Disable bracketed paste
+	// \x1b[?25h   : Show cursor
+	// \x1b[H\x1b[2J : Clear screen
+	_, _ = os.Stdout.Write([]byte("\x1b[m\x1b[?1049l\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l\x1b[?2004l\x1b[?25h\x1b[H\x1b[2J"))
 }
 
 func processInput(conn net.Conn, data []byte, pendingCtrlD *bool, detached *int32, readOnly bool) error {
