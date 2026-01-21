@@ -30,11 +30,13 @@ const defaultDetachByte = 0x04
 
 func TestProcessInput_Normal(t *testing.T) {
 	conn := &mockConn{}
-	var pendingCtrlD bool
-	var detached int32
+	client := &SessionClient{
+		Conn:      conn,
+		DetachKey: defaultDetachByte,
+	}
 
 	input := []byte("h")
-	err := processInput(conn, input, &pendingCtrlD, &detached, false, defaultDetachByte)
+	err := client.processInput(input)
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
@@ -53,28 +55,30 @@ func TestProcessInput_Normal(t *testing.T) {
 
 func TestProcessInput_Detach(t *testing.T) {
 	conn := &mockConn{}
-	var pendingCtrlD bool
-	var detached int32
+	client := &SessionClient{
+		Conn:      conn,
+		DetachKey: defaultDetachByte,
+	}
 
 	// Ctrl+D (0x04) then 'd'
 	input := []byte{0x04}
-	err := processInput(conn, input, &pendingCtrlD, &detached, false, defaultDetachByte)
+	err := client.processInput(input)
 	if err != nil {
 		t.Fatalf("Unexpected error on Ctrl+D: %v", err)
 	}
-	if !pendingCtrlD {
-		t.Error("pendingCtrlD should be true")
+	if !client.pendingPrefix {
+		t.Error("pendingPrefix should be true")
 	}
 	if conn.out.Len() != 0 {
 		t.Error("Should not send Ctrl+D yet")
 	}
 
 	input = []byte{'d'}
-	err = processInput(conn, input, &pendingCtrlD, &detached, false, defaultDetachByte)
+	err = client.processInput(input)
 	if err != io.EOF {
 		t.Errorf("Expected EOF (stop signal), got %v", err)
 	}
-	if atomic.LoadInt32(&detached) != 1 {
+	if atomic.LoadInt32(&client.detached) != 1 {
 		t.Error("Detached flag not set")
 	}
 	if !conn.closed {
@@ -84,12 +88,14 @@ func TestProcessInput_Detach(t *testing.T) {
 
 func TestProcessInput_LiteralCtrlD(t *testing.T) {
 	conn := &mockConn{}
-	var pendingCtrlD bool
-	var detached int32
+	client := &SessionClient{
+		Conn:      conn,
+		DetachKey: defaultDetachByte,
+	}
 
 	// Ctrl+D, Ctrl+D -> Send single Ctrl+D
-	_ = processInput(conn, []byte{0x04}, &pendingCtrlD, &detached, false, defaultDetachByte)
-	_ = processInput(conn, []byte{0x04}, &pendingCtrlD, &detached, false, defaultDetachByte)
+	_ = client.processInput([]byte{0x04})
+	_ = client.processInput([]byte{0x04})
 	
 	// Should have sent 1 packet with 0x04
 	// Header(5) + Data(1) = 6 bytes
@@ -104,11 +110,13 @@ func TestProcessInput_LiteralCtrlD(t *testing.T) {
 
 func TestProcessInput_Passthrough(t *testing.T) {
 	conn := &mockConn{}
-	var pendingCtrlD bool
-	var detached int32
+	client := &SessionClient{
+		Conn:      conn,
+		DetachKey: defaultDetachByte,
+	}
 
 	// Ctrl+D, 'x' -> Send Ctrl+D then 'x' in ONE packet
-	_ = processInput(conn, []byte{0x04, 'x'}, &pendingCtrlD, &detached, false, defaultDetachByte)
+	_ = client.processInput([]byte{0x04, 'x'})
 	
 	// Header(5) + Data(2) = 7 bytes
 	if conn.out.Len() != 7 {
@@ -127,51 +135,54 @@ data := conn.out.Bytes()
 
 func TestProcessInput_ReadOnly(t *testing.T) {
 	conn := &mockConn{}
-	var pendingCtrlD bool
-	var detached int32
+	client := &SessionClient{
+		Conn:      conn,
+		DetachKey: defaultDetachByte,
+		ReadOnly:  true,
+	}
 
 	// Normal input should be ignored
-	_ = processInput(conn, []byte("hello"), &pendingCtrlD, &detached, true, defaultDetachByte)
+	_ = client.processInput([]byte("hello"))
 	if conn.out.Len() != 0 {
 		t.Errorf("Expected 0 bytes output in read-only mode, got %d", conn.out.Len())
 	}
 
 	// Detach sequence should STILL work
-	_ = processInput(conn, []byte{0x04}, &pendingCtrlD, &detached, true, defaultDetachByte)
-	if !pendingCtrlD {
-		t.Error("pendingCtrlD should be true in read-only mode")
+	_ = client.processInput([]byte{0x04})
+	if !client.pendingPrefix {
+		t.Error("pendingPrefix should be true in read-only mode")
 	}
-	err := processInput(conn, []byte{'d'}, &pendingCtrlD, &detached, true, defaultDetachByte)
+	err := client.processInput([]byte{'d'})
 	if err != io.EOF {
 		t.Errorf("Expected EOF on detach in read-only mode, got %v", err)
 	}
-	if atomic.LoadInt32(&detached) != 1 {
+	if atomic.LoadInt32(&client.detached) != 1 {
 		t.Error("Detached flag not set in read-only mode")
 	}
 }
 
 func TestProcessInput_CustomKey(t *testing.T) {
 	conn := &mockConn{}
-	var pendingPrefix bool
-	var detached int32
-	
 	// Use Ctrl+A (0x01) as detach key
-	detachByte := byte(0x01)
+	client := &SessionClient{
+		Conn:      conn,
+		DetachKey: 0x01,
+	}
 
 	// Ctrl+A, d -> Detach
-	err := processInput(conn, []byte{0x01}, &pendingPrefix, &detached, false, detachByte)
+	err := client.processInput([]byte{0x01})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !pendingPrefix {
+	if !client.pendingPrefix {
 		t.Error("Pending prefix should be set for 0x01")
 	}
 	
-	err = processInput(conn, []byte{'d'}, &pendingPrefix, &detached, false, detachByte)
+	err = client.processInput([]byte{'d'})
 	if err != io.EOF {
 		t.Error("Should detach with Ctrl+A, d")
 	}
-	if atomic.LoadInt32(&detached) != 1 {
+	if atomic.LoadInt32(&client.detached) != 1 {
 		t.Error("Detached flag not set")
 	}
 }
@@ -226,7 +237,7 @@ func TestParseDetachKey(t *testing.T) {
 		{"ctrl-z", 0x1A},
 		{"ctrl-d", 0x04},
 		{"ctrl-[", 0x1B},
-		{"ctrl-\\", 0x1C},
+		{"ctrl-\\\\", 0x1C},
 		{"ctrl-]", 0x1D},
 		{"ctrl-^", 0x1E},
 		{"ctrl-_", 0x1F},

@@ -17,6 +17,11 @@ const (
 )
 
 const (
+	ModeMaster   byte = 0x00
+	ModeReadOnly byte = 0x01
+)
+
+const (
 	// MaxPayloadSize is the maximum allowed size for a single packet payload (64KB).
 	MaxPayloadSize = 64 * 1024
 )

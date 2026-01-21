@@ -77,7 +77,7 @@ func TestServer_HandleClient_MasterKick(t *testing.T) {
 	s1, c1 := net.Pipe()
 	
 	go func() {
-		_ = protocol.WritePacket(c1, protocol.TypeMode, []byte{0x00})
+		_ = protocol.WritePacket(c1, protocol.TypeMode, []byte{protocol.ModeMaster})
 	}()
 	
 	go srv.handleClient(s1, pw)
@@ -96,7 +96,7 @@ func TestServer_HandleClient_MasterKick(t *testing.T) {
 	defer func() { _ = c2.Close() }()
 	
 	go func() {
-		_ = protocol.WritePacket(c2, protocol.TypeMode, []byte{0x00})
+		_ = protocol.WritePacket(c2, protocol.TypeMode, []byte{protocol.ModeMaster})
 	}()
 	
 	// We MUST read from c1 in background because handleClient(s2) will block writing TypeKick to s1
@@ -144,7 +144,7 @@ func TestServer_HandleClient_ReadOnly(t *testing.T) {
 	s1, c1 := net.Pipe()
 	
 	go func() {
-		_ = protocol.WritePacket(c1, protocol.TypeMode, []byte{0x01})
+		_ = protocol.WritePacket(c1, protocol.TypeMode, []byte{protocol.ModeReadOnly})
 		_ = protocol.WritePacket(c1, protocol.TypeData, []byte("forbidden"))
 		time.Sleep(50 * time.Millisecond)
 		_ = c1.Close()

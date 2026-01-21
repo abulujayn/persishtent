@@ -200,7 +200,7 @@ func (s *Server) handleClient(conn net.Conn, ptmx *os.File) {
 
 
 
-	isReadOnly := payload[0] == 0x01
+	isReadOnly := payload[0] == protocol.ModeReadOnly
 
 
 

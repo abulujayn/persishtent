@@ -21,70 +21,106 @@ import (
 var ErrDetached = errors.New("detached")
 var ErrKicked = errors.New("kicked by another session")
 
-// Attach connects to an existing session
-func Attach(name string, sockPath string, replay bool, readOnly bool, tail int) error {
+// SessionClient handles the client-side session logic.
+type SessionClient struct {
+	Conn       net.Conn
+	Name       string
+	DetachKey  byte
+	ReadOnly   bool
+	
+	stdinCh    chan []byte
+	
+pendingPrefix bool
+detached      int32 // atomic
+}
+
+func NewSessionClient(name string, detachKey byte, readOnly bool) *SessionClient {
+	return &SessionClient{
+		Name:      name,
+		DetachKey: detachKey,
+		ReadOnly:  readOnly,
+		stdinCh:   make(chan []byte),
+	}
+}
+
+func (c *SessionClient) Connect(sockPath string) error {
 	var err error
 	if sockPath == "" {
-		sockPath, err = session.GetSocketPath(name)
+		sockPath, err = session.GetSocketPath(c.Name)
 		if err != nil {
 			return err
 		}
 	}
+	c.Conn, err = net.Dial("unix", sockPath)
+	return err
+}
 
-	detachByte := parseDetachKey(config.Global.DetachKey)
-
-	// 1. Connect
-	conn, err := net.Dial("unix", sockPath)
-	if err != nil {
-		return err
+func (c *SessionClient) Handshake() error {
+	// Send Mode
+	mode := []byte{protocol.ModeMaster}
+	if c.ReadOnly {
+		mode = []byte{protocol.ModeReadOnly}
 	}
-	defer func() { _ = conn.Close() }()
-
-	// 1.5 Send Mode
-	mode := []byte{0x00} // Master
-	if readOnly {
-		mode = []byte{0x01} // Read-only
-	}
-	if err := protocol.WritePacket(conn, protocol.TypeMode, mode); err != nil {
+	if err := protocol.WritePacket(c.Conn, protocol.TypeMode, mode); err != nil {
 		return err
 	}
 
-	// 1.6 Sync Env
+	// Sync Env
 	currentSSH := os.Getenv("SSH_AUTH_SOCK")
 	if currentSSH != "" {
-		_ = protocol.WritePacket(conn, protocol.TypeEnv, []byte("SSH_AUTH_SOCK="+currentSSH))
+		_ = protocol.WritePacket(c.Conn, protocol.TypeEnv, []byte("SSH_AUTH_SOCK="+currentSSH))
 	}
+	return nil
+}
 
-	// 2. Raw Mode
-	// We enter raw mode early to handle log replay correctly and drain input
-	oldState, err := term.MakeRaw(int(os.Stdin.Fd()))
-	if err != nil {
-		return err
-	}
-	defer func() { _ = term.Restore(int(os.Stdin.Fd()), oldState) }()
-
-	// 3. Replay Log
-	if replay {
-		logFiles, _ := session.GetLogFiles(name)
-		for _, lp := range logFiles {
-			f, err := os.Open(lp)
-			if err == nil {
-				if tail > 0 {
-					replayTail(os.Stdout, f, tail)
-				} else {
-					_, _ = io.Copy(os.Stdout, f)
+func (c *SessionClient) processInput(data []byte) error {
+	for _, b := range data {
+		if c.pendingPrefix {
+			c.pendingPrefix = false
+			switch b {
+			case 'd':
+				// Prefix, d -> Detach
+				atomic.StoreInt32(&c.detached, 1)
+				_ = c.Conn.Close()
+				return io.EOF // signal stop
+			case c.DetachKey:
+				if c.ReadOnly {
+					continue
 				}
-				_ = f.Close()
+				// Prefix, Prefix -> Send single Prefix
+				if err := protocol.WritePacket(c.Conn, protocol.TypeData, []byte{c.DetachKey}); err != nil {
+					return err
+				}
+			default:
+				if c.ReadOnly {
+					continue
+				}
+				// Prefix, <other> -> Send Prefix then <other>
+				if err := protocol.WritePacket(c.Conn, protocol.TypeData, []byte{c.DetachKey, b}); err != nil {
+					return err
+				}
+			}
+		} else {
+			if b == c.DetachKey {
+				c.pendingPrefix = true
+			} else {
+				if c.ReadOnly {
+					continue
+				}
+				if err := protocol.WritePacket(c.Conn, protocol.TypeData, []byte{b}); err != nil {
+					return err
+				}
 			}
 		}
 	}
+	return nil
+}
 
-	// 4. Sync Terminal (Drain responses)
+func (c *SessionClient) DrainInput() error {
 	// Send Device Status Report (DSR) request.
 	_, _ = os.Stdout.Write([]byte("\x1b[6n"))
 
-	// We use a dedicated channel for Stdin to allow select with timeout
-	stdinCh := make(chan []byte)
+	// Start Stdin reader
 	go func() {
 		buf := make([]byte, 1024)
 		for {
@@ -92,10 +128,10 @@ func Attach(name string, sockPath string, replay bool, readOnly bool, tail int) 
 			if n > 0 {
 				tmp := make([]byte, n)
 				copy(tmp, buf[:n])
-				stdinCh <- tmp
+				c.stdinCh <- tmp
 			}
 			if err != nil {
-				close(stdinCh)
+				close(c.stdinCh)
 				return
 			}
 		}
@@ -107,13 +143,10 @@ func Attach(name string, sockPath string, replay bool, readOnly bool, tail int) 
 	inactivity := time.NewTimer(250 * time.Millisecond)
 	defer inactivity.Stop()
 
-	var pendingPrefix bool
-	var detached int32
-
 DrainLoop:
 	for {
 		select {
-		case chunk, ok := <-stdinCh:
+		case chunk, ok := <-c.stdinCh:
 			if !ok {
 				return nil // Stdin closed
 			}
@@ -126,10 +159,10 @@ DrainLoop:
 				}
 
 				// Found a response!
-				// 1. Forward anything BEFORE the sequence (unlikely but possible)
+				// 1. Forward anything BEFORE the sequence
 				escIdx := bytes.Index(drainBuf, []byte("\x1b"))
 				if escIdx > 0 {
-					if err := processInput(conn, drainBuf[:escIdx], &pendingPrefix, &detached, readOnly, detachByte); err != nil {
+					if err := c.processInput(drainBuf[:escIdx]); err != nil {
 						return nil
 					}
 				}
@@ -138,7 +171,7 @@ DrainLoop:
 			drainBuf = drainBuf[escIdx+seqLen:]
 
 				// Reset inactivity timer
-			if !inactivity.Stop() {
+				if !inactivity.Stop() {
 					select {
 					case <-inactivity.C:
 					default:
@@ -147,10 +180,9 @@ DrainLoop:
 				inactivity.Reset(100 * time.Millisecond)
 			}
 
-			// If we have data that is definitely NOT part of an escape sequence,
-			// we can forward it.
+			// Forward non-escape data
 			if len(drainBuf) > 0 && !bytes.Contains(drainBuf, []byte("\x1b")) {
-				if err := processInput(conn, drainBuf, &pendingPrefix, &detached, readOnly, detachByte); err != nil {
+				if err := c.processInput(drainBuf); err != nil {
 					return nil
 				}
 				drainBuf = nil
@@ -158,7 +190,7 @@ DrainLoop:
 
 			// Safety limit
 			if len(drainBuf) > 4096 {
-				if err := processInput(conn, drainBuf, &pendingPrefix, &detached, readOnly, detachByte); err != nil {
+				if err := c.processInput(drainBuf); err != nil {
 					return nil
 				}
 				drainBuf = nil
@@ -173,23 +205,26 @@ DrainLoop:
 
 	// Flush remaining
 	if len(drainBuf) > 0 {
-		if err := processInput(conn, drainBuf, &pendingPrefix, &detached, readOnly, detachByte); err != nil {
+		if err := c.processInput(drainBuf); err != nil {
 			return nil
 		}
 	}
+	return nil
+}
 
+func (c *SessionClient) Stream() error {
 	// 5. Initial Resize
-	if !readOnly {
-		sendResize(conn)
+	if !c.ReadOnly {
+		sendResize(c.Conn)
 	}
 
 	// 6. Handle Resize Signals
-	if !readOnly {
+	if !c.ReadOnly {
 		sigCh := make(chan os.Signal, 1)
 		signal.Notify(sigCh, syscall.SIGWINCH)
 		go func() {
 			for range sigCh {
-				sendResize(conn)
+				sendResize(c.Conn)
 			}
 		}()
 	}
@@ -197,8 +232,8 @@ DrainLoop:
 	// 7. Stdin -> Socket (Main Loop)
 	// We continue reading from stdinCh
 	go func() {
-		for chunk := range stdinCh {
-			if err := processInput(conn, chunk, &pendingPrefix, &detached, readOnly, detachByte); err != nil {
+		for chunk := range c.stdinCh {
+			if err := c.processInput(chunk); err != nil {
 				return
 			}
 		}
@@ -206,9 +241,9 @@ DrainLoop:
 
 	// 8. Socket -> Stdout
 	for {
-		t, payload, err := protocol.ReadPacket(conn)
+		t, payload, err := protocol.ReadPacket(c.Conn)
 		if err != nil {
-			if atomic.LoadInt32(&detached) == 1 {
+			if atomic.LoadInt32(&c.detached) == 1 {
 				restoreTerminal()
 				return ErrDetached
 			}
@@ -224,20 +259,57 @@ DrainLoop:
 	}
 }
 
-// restoreTerminal sends escape sequences to reset terminal modes that might have been
-// enabled by applications inside the session (e.g. alternate buffer, mouse tracking).
+// Attach connects to an existing session
+func Attach(name string, sockPath string, replay bool, readOnly bool, tail int) error {
+	detachByte := parseDetachKey(config.Global.DetachKey)
+	client := NewSessionClient(name, detachByte, readOnly)
+
+	if err := client.Connect(sockPath); err != nil {
+		return err
+	}
+	defer func() { _ = client.Conn.Close() }()
+
+	if err := client.Handshake(); err != nil {
+		return err
+	}
+
+	// Raw Mode
+	// We enter raw mode early to handle log replay correctly and drain input
+	oldState, err := term.MakeRaw(int(os.Stdin.Fd()))
+	if err != nil {
+		return err
+	}
+	defer func() { _ = term.Restore(int(os.Stdin.Fd()), oldState) }()
+
+	// Replay Log
+	if replay {
+		logFiles, _ := session.GetLogFiles(name)
+		for _, lp := range logFiles {
+			f, err := os.Open(lp)
+			if err == nil {
+				if tail > 0 {
+					replayTail(os.Stdout, f, tail)
+				} else {
+					_, _ = io.Copy(os.Stdout, f)
+				}
+				_ = f.Close()
+			}
+		}
+	}
+
+	if err := client.DrainInput(); err != nil {
+		return err
+	}
+
+	return client.Stream()
+}
+
+// restoreTerminal sends escape sequences to reset terminal modes
 func restoreTerminal() {
-	// \x1b[m       : Reset colors/attributes
-	// \x1b[?1049l : Exit alternate buffer
-	// \x1b[?1000l... : Disable mouse tracking
-	// \x1b[?2004l : Disable bracketed paste
-	// \x1b[?25h   : Show cursor
-	// \x1b[H\x1b[2J : Clear screen
 	_, _ = os.Stdout.Write([]byte("\x1b[m\x1b[?1049l\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l\x1b[?2004l\x1b[?25h\x1b[H\x1b[2J"))
 }
 
 func replayTail(w io.Writer, f *os.File, n int) {
-	// Minimal backward scanning tail
 	stat, _ := f.Stat()
 	size := stat.Size()
 	if size == 0 {
@@ -260,7 +332,6 @@ func replayTail(w io.Writer, f *os.File, n int) {
 
 		for i := len(buf) - 1; i >= 0; i-- {
 			if buf[i] == '\n' {
-				// Skip the very last character if it's a newline
 				if offset+int64(i) == size-1 {
 					continue
 				}
@@ -308,51 +379,7 @@ func parseDetachKey(key string) byte {
 	return 0x04 // default ctrl-d
 }
 
-func processInput(conn net.Conn, data []byte, pendingPrefix *bool, detached *int32, readOnly bool, detachByte byte) error {
-	for _, b := range data {
-		if *pendingPrefix {
-			*pendingPrefix = false
-			switch b {
-			case 'd':
-				// Prefix, d -> Detach
-				atomic.StoreInt32(detached, 1)
-				_ = conn.Close()
-				return io.EOF // signal stop
-			case detachByte:
-				if readOnly {
-					continue
-				}
-				// Prefix, Prefix -> Send single Prefix
-				if err := protocol.WritePacket(conn, protocol.TypeData, []byte{detachByte}); err != nil {
-					return err
-				}
-			default:
-				if readOnly {
-					continue
-				}
-				// Prefix, <other> -> Send Prefix then <other>
-				if err := protocol.WritePacket(conn, protocol.TypeData, []byte{detachByte, b}); err != nil {
-					return err
-				}
-			}
-		} else {
-			if b == detachByte {
-				*pendingPrefix = true
-			} else {
-				if readOnly {
-					continue
-				}
-				if err := protocol.WritePacket(conn, protocol.TypeData, []byte{b}); err != nil {
-					return err
-				}
-			}
-		}
-	}
-	return nil
-}
-
 // matchTerminalResponse returns the length of the first terminal response sequence
-// starting at the first ESC in data. Returns 0 if no complete response is found.
 func matchTerminalResponse(data []byte) int {
 	escIdx := bytes.Index(data, []byte("\x1b"))
 	if escIdx < 0 {
@@ -372,7 +399,6 @@ func matchTerminalResponse(data []byte) int {
 			}
 		}
 	case ']': // OSC
-		// OSC sequences end with BEL (0x07) or ST (ESC \)
 		for i := 2; i < len(remaining); i++ {
 			if remaining[i] == 0x07 {
 				return i + 1
@@ -382,14 +408,12 @@ func matchTerminalResponse(data []byte) int {
 			}
 		}
 	case 'P', '_', '^', 'k': // DCS, APC, PM, Title
-		// These typically end with ST (ESC \)
 		for i := 2; i < len(remaining); i++ {
 			if remaining[i] == '\\' && remaining[i-1] == 0x1b {
 				return i + 1
 			}
 		}
 	default:
-		// Other ESC sequences are usually 2 bytes
 		return 2
 	}
 	return 0
@@ -421,7 +445,7 @@ func Kill(name string, sockPath string) error {
 	defer func() { _ = conn.Close() }()
 
 	// Send Mode (Master mode to ensure signal is processed)
-	if err := protocol.WritePacket(conn, protocol.TypeMode, []byte{0x00}); err != nil {
+	if err := protocol.WritePacket(conn, protocol.TypeMode, []byte{protocol.ModeMaster}); err != nil {
 		return err
 	}
 
