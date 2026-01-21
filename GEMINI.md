@@ -11,7 +11,9 @@
 - **Key Features:**
   - Full session output replay upon reattachment.
   - "Native-like" feel with support for alternate buffers (e.g., `vim`, `top`) and graceful restoration of terminal state.
-  - Smart session management (auto-naming, auto-attach, nesting protection).
+  - **Smart Session Management:** Auto-naming (simple numeric indices), auto-attach, nesting protection, and **interactive selection menu**.
+  - **Shell Integration:** Prompt injection (`psh:name`) and window title updates via `init` scripts.
+  - **Configuration:** Customizable via `~/.config/persishtent/config.json` (log limits, prompt prefix, detach key).
   - Read-only attachment mode.
   - SSH agent forwarding support via stable symlinks in `~/.persishtent/`.
   - Custom TLV (Type-Length-Value) protocol for IPC.
@@ -27,10 +29,12 @@
 
 ## Directory Structure
 
-- `cmd/persishtent/`: Entry point and CLI command parsing.
-- `internal/server/`: Daemon/Server logic (PTY management, broadcasting, log rotation).
-- `internal/client/`: Client logic (attachment, log replay, terminal synchronization).
-- `internal/protocol/`: Definition of the TLV protocol used for client-daemon communication.
+- `cmd/persishtent/`: Entry point (thin wrapper).
+- `internal/cli/`: CLI command implementation and helper logic.
+- `internal/config/`: Configuration loading and defaults.
+- `internal/server/`: Daemon/Server logic (PTY management, broadcasting, `LogRotator`).
+- `internal/client/`: Client logic (`SessionClient` struct, attachment, log replay, terminal synchronization).
+- `internal/protocol/`: Definition of the TLV protocol and constants.
 - `internal/session/`: Session lifecycle management (listing, validation, cleanup, metadata).
 - `tests/`: Integration tests for end-to-end verification.
 
@@ -64,11 +68,34 @@ go test -v tests/integration_test.go
 golangci-lint run
 ```
 
+## Configuration
+
+Configuration is loaded from `~/.config/persishtent/config.json`.
+
+```json
+{
+  "log_rotation_size_mb": 1,
+  "max_log_rotations": 5,
+  "prompt_prefix": "psh",
+  "detach_key": "ctrl-d"
+}
+```
+
+## Commands
+
+- `persishtent`: Auto-attach or interactive selection.
+- `persishtent start [-d] [name]`: Start a new session.
+- `persishtent attach [name]`: Attach to a session.
+- `persishtent list`: List active sessions.
+- `persishtent kill [name]`: Kill a session.
+- `persishtent rename <old> <new>`: Rename a session.
+- `persishtent clean`: Cleanup stale sockets and logs.
+- `persishtent init <bash|zsh>`: Generate shell integration script.
+- `persishtent completion`: Generate shell completion script.
+
 ## Development Conventions
 
 - **Internal Packages:** Core logic is kept in `internal/` to encapsulate implementation details and prevent external imports.
-- **Error Handling:** Errors are handled explicitly. Custom error types like `ErrDetached` and `ErrKicked` are used in the client for specific attachment states.
-- **Session Cleanup:** Stale sessions (dead PIDs or unreachable sockets) are automatically pruned on CLI invocation via `session.List()`.
-- **Protocol Stability:** Changes to `internal/protocol/protocol.go` must be carefully managed as they affect communication between different versions of the client and daemon.
-- **Terminal State:** The client is responsible for restoring terminal state (ESC sequences) upon detachment to ensure the host terminal isn't left in a broken state (e.g., inside an alternate buffer).
-- **Log Rotation:** The daemon handles basic log rotation (up to 5 rotations of 1MB each) to prevent disk exhaustion.
+- **Session Cleanup:** Stale sessions (dead PIDs or unreachable sockets) are automatically pruned on CLI invocation via `session.Clean()`.
+- **Protocol Stability:** `internal/protocol/protocol.go` defines packet types and constants (`ModeMaster`, `ModeReadOnly`).
+- **Log Rotation:** The daemon handles log rotation via `LogRotator` in `internal/server/logger.go`.
