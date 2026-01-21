@@ -15,9 +15,17 @@ import (
 
 func GenerateAutoName() string {
 	sessions, _ := session.List()
-	used := make(map[string]bool)
+	var names []string
 	for _, s := range sessions {
-		used[s.Name] = true
+		names = append(names, s.Name)
+	}
+	return FindNextAutoName(names)
+}
+
+func FindNextAutoName(existingNames []string) string {
+	used := make(map[string]bool)
+	for _, name := range existingNames {
+		used[name] = true
 	}
 
 	i := 0
