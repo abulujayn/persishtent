@@ -188,7 +188,7 @@ _persishtent_completions() {
 			local sessions=$(persishtent list 2>/dev/null | grep "^  " | awk '{print $1}')
 			COMPREPLY=( $(compgen -W "${sessions}" -- ${cur}) )
 			return 0
-			;;*
+			;;
 		*)
 			;;
 	esac
