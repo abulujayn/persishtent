@@ -118,10 +118,10 @@ func TestIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to read PS1 check file: %v", err)
 	}
-	// We expect "psh:integration-test " to be present.
+	// We expect "persh:integration-test " to be present.
 	// But note: env output will be PS1=...
-	if !bytes.Contains(ps1Content, []byte("psh:"+sessionName)) {
-		t.Logf("PS1 check warning: 'psh:%s' not found in PS1 env. Got: %s. This might be due to shell startup overriding it.", sessionName, string(ps1Content))
+	if !bytes.Contains(ps1Content, []byte("persh:"+sessionName)) {
+		t.Logf("PS1 check warning: 'persh:%s' not found in PS1 env. Got: %s. This might be due to shell startup overriding it.", sessionName, string(ps1Content))
 		// We don't fail here because some shells (like test environments) might handle PS1 differently or not export it to 'env'.
 		// But checking it is useful.
 	}

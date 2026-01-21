@@ -20,7 +20,7 @@ func init() {
 	Global = Config{
 		LogRotationSizeMB: 1,
 		MaxLogRotations:   5,
-		PromptPrefix:      "psh",
+		PromptPrefix:      "persh",
 		DetachKey:         "ctrl-d",
 	}
 }

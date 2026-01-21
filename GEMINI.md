@@ -12,7 +12,7 @@
   - Full session output replay upon reattachment.
   - "Native-like" feel with support for alternate buffers (e.g., `vim`, `top`) and graceful restoration of terminal state.
   - **Smart Session Management:** Auto-naming (simple numeric indices), auto-attach, nesting protection, and **interactive selection menu**.
-  - **Shell Integration:** Prompt injection (`psh:name`) and window title updates via `init` scripts.
+  - **Shell Integration:** Prompt injection (`persh:name`) and window title updates via `init` scripts.
   - **Configuration:** Customizable via `~/.config/persishtent/config.json` (log limits, prompt prefix, detach key).
   - Read-only attachment mode.
   - SSH agent forwarding support via stable symlinks in `~/.persishtent/`.
@@ -76,7 +76,7 @@ Configuration is loaded from `~/.config/persishtent/config.json`.
 {
   "log_rotation_size_mb": 1,
   "max_log_rotations": 5,
-  "prompt_prefix": "psh",
+  "prompt_prefix": "persh",
   "detach_key": "ctrl-d"
 }
 ```
